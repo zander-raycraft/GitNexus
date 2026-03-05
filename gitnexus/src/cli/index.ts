@@ -35,6 +35,7 @@ program
   .description('Index a repository (full analysis)')
   .option('-f, --force', 'Force full re-index even if up to date')
   .option('--embeddings', 'Enable embedding generation for semantic search (off by default)')
+  .option('--skills', 'Generate repo-specific skill files from detected communities')
   .action(analyzeCommand);
 
 program

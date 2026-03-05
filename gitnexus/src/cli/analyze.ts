@@ -17,6 +17,7 @@ import { initKuzu, loadGraphToKuzu, getKuzuStats, executeQuery, executeWithReuse
 import { getStoragePaths, saveMeta, loadMeta, addToGitignore, registerRepo, getGlobalRegistryPath } from '../storage/repo-manager.js';
 import { getCurrentCommit, isGitRepo, getGitRoot } from '../storage/git.js';
 import { generateAIContextFiles } from './ai-context.js';
+import { generateSkillFiles, type GeneratedSkillInfo } from './skill-gen.js';
 import fs from 'fs/promises';
 
 
@@ -45,6 +46,7 @@ function ensureHeap(): boolean {
 export interface AnalyzeOptions {
   force?: boolean;
   embeddings?: boolean;
+  skills?: boolean;
 }
 
 /** Threshold: auto-skip embeddings for repos with more nodes than this */
@@ -97,7 +99,7 @@ export const analyzeCommand = async (
   const currentCommit = getCurrentCommit(repoPath);
   const existingMeta = await loadMeta(storagePath);
 
-  if (existingMeta && !options?.force && existingMeta.lastCommit === currentCommit) {
+  if (existingMeta && !options?.force && !options?.skills && existingMeta.lastCommit === currentCommit) {
     console.log('  Already up to date\n');
     return;
   }
@@ -303,6 +305,13 @@ export const analyzeCommand = async (
     aggregatedClusterCount = Array.from(groups.values()).filter(count => count >= 5).length;
   }
 
+  let generatedSkills: GeneratedSkillInfo[] = [];
+  if (options?.skills && pipelineResult.communityResult) {
+    updateBar(99, 'Generating skill files...');
+    const skillResult = await generateSkillFiles(repoPath, projectName, pipelineResult);
+    generatedSkills = skillResult.skills;
+  }
+
   const aiContext = await generateAIContextFiles(repoPath, storagePath, projectName, {
     files: pipelineResult.totalFileCount,
     nodes: stats.nodes,
@@ -310,7 +319,7 @@ export const analyzeCommand = async (
     communities: pipelineResult.communityResult?.stats.totalCommunities,
     clusters: aggregatedClusterCount,
     processes: pipelineResult.processResult?.stats.totalProcesses,
-  });
+  }, generatedSkills);
 
   await closeKuzu();
   // Note: we intentionally do NOT call disposeEmbedder() here.
