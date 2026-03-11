@@ -47,6 +47,7 @@ export interface AnalyzeOptions {
   force?: boolean;
   embeddings?: boolean;
   skills?: boolean;
+  verbose?: boolean;
 }
 
 /** Threshold: auto-skip embeddings for repos with more nodes than this */
@@ -73,6 +74,10 @@ export const analyzeCommand = async (
   options?: AnalyzeOptions
 ) => {
   if (ensureHeap()) return;
+
+  if (options?.verbose) {
+    process.env.GITNEXUS_VERBOSE = '1';
+  }
 
   console.log('\n  GitNexus Analyzer\n');
 
@@ -278,6 +283,13 @@ export const analyzeCommand = async (
   // ── Phase 5: Finalize (98–100%) ───────────────────────────────────
   updateBar(98, 'Saving metadata...');
 
+  // Count embeddings in the index (cached + newly generated)
+  let embeddingCount = 0;
+  try {
+    const embResult = await executeQuery(`MATCH (e:CodeEmbedding) RETURN count(e) AS cnt`);
+    embeddingCount = embResult?.[0]?.cnt ?? 0;
+  } catch { /* table may not exist if embeddings never ran */ }
+
   const meta = {
     repoPath,
     lastCommit: currentCommit,
@@ -288,6 +300,7 @@ export const analyzeCommand = async (
       edges: stats.edges,
       communities: pipelineResult.communityResult?.stats.totalCommunities,
       processes: pipelineResult.processResult?.stats.totalProcesses,
+      embeddings: embeddingCount,
     },
   };
   await saveMeta(storagePath, meta);
