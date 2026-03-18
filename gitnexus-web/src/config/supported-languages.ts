@@ -9,6 +9,7 @@ export enum SupportedLanguages {
     Go = 'go',
     Rust = 'rust',
     PHP = 'php',
-    // Ruby = 'ruby',
+    Ruby = 'ruby',
+    Kotlin = 'kotlin',
     Swift = 'swift',
 }

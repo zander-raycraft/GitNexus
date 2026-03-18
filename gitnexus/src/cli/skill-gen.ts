@@ -235,11 +235,24 @@ const buildCommunitiesFromMemberships = (
       ? bestFolder.charAt(0).toUpperCase() + bestFolder.slice(1)
       : `Cluster_${commId.replace('comm_', '')}`;
 
+    // Compute cohesion as internal-edge ratio (matches backend calculateCohesion).
+    // For each member node, count edges that stay inside the community vs total.
+    const nodeSet = new Set(nodeIds);
+    let internalEdges = 0;
+    let totalEdges = 0;
+    graph.forEachRelationship(rel => {
+      if (nodeSet.has(rel.sourceId)) {
+        totalEdges++;
+        if (nodeSet.has(rel.targetId)) internalEdges++;
+      }
+    });
+    const cohesion = totalEdges > 0 ? Math.min(1.0, internalEdges / totalEdges) : 1.0;
+
     communities.push({
       id: commId,
       label,
       heuristicLabel: label,
-      cohesion: 0.5, // default when we can't compute from graphology
+      cohesion,
       symbolCount: nodeIds.length,
     });
   }

@@ -40,6 +40,8 @@ const getWasmPath = (language: SupportedLanguages, filePath?: string): string =>
         [SupportedLanguages.Go]: '/wasm/go/tree-sitter-go.wasm',
         [SupportedLanguages.Rust]: '/wasm/rust/tree-sitter-rust.wasm',
         [SupportedLanguages.PHP]: '/wasm/php/tree-sitter-php.wasm',
+        [SupportedLanguages.Ruby]: '/wasm/ruby/tree-sitter-ruby.wasm',
+        [SupportedLanguages.Kotlin]: '', // Kotlin WASM parser not yet available for web
         [SupportedLanguages.Swift]: '/wasm/swift/tree-sitter-swift.wasm',
     };
     
