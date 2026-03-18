@@ -43,10 +43,12 @@ coverage/
 
 .env*.local
 .gitnexus
-.claude/settings.local.json
+.claude/settings.local.json\
+.claude/skills/generated/
 
 # Claude Code worktrees
 .claude/worktrees/
+
 
 # Assets (screenshots, images)
 assets/
