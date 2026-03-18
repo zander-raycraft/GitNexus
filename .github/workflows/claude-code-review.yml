@@ -1,24 +1,46 @@
 name: Claude Code Review
 
+# Uses pull_request_target so the workflow runs in base repo context with
+# access to secrets, even for fork PRs. The luccabb/claude-code-action fork
+# handles fork branch checkout internally via pull/{N}/head refs.
+
 on:
-  # pull_request_target runs in base repo context — secrets are available for both
-  # same-repo and fork PRs. The action fetches the correct branch internally.
+  # Label a PR with "claude-review" to trigger, or comment @claude / /review
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+# Serialize per-PR so concurrent triggers don't race
+concurrency:
+  group: claude-review-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
   claude-review:
-    # Security guard: pull_request_target runs with repo secrets, so restrict to trusted authors.
-    # Skip draft PRs.
+    # Run only when:
+    #   1. The "claude-review" label is added to a non-draft PR by a trusted contributor, OR
+    #   2. A trusted contributor comments "@claude" or "/review" on a PR
     if: |
-      github.event.pull_request.draft == false &&
       (
-        github.event.pull_request.author_association == 'OWNER' ||
-        github.event.pull_request.author_association == 'MEMBER' ||
-        github.event.pull_request.author_association == 'COLLABORATOR'
+        github.event_name == 'pull_request_target' &&
+        github.event.label.name == 'claude-review' &&
+        github.event.pull_request.draft == false &&
+        (github.event.pull_request.author_association == 'OWNER' ||
+         github.event.pull_request.author_association == 'MEMBER' ||
+         github.event.pull_request.author_association == 'COLLABORATOR')
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (contains(github.event.comment.body, '@claude') ||
+         contains(github.event.comment.body, '/review')) &&
+        (github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'COLLABORATOR')
       )
-
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
@@ -33,13 +55,10 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
-        # SHA-pinned to luccabb fork for fork PR support (see github.com/anthropics/claude-code-action/issues/963)
+        # SHA-pinned to luccabb fork for fork PR support (see github.com/anthropics/claude-code-action/issues/223)
         uses: luccabb/claude-code-action@7f39722b8a782471258f32e1d5a9a531b2b68056
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}'

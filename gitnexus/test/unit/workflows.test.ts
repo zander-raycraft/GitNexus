@@ -142,9 +142,15 @@ describe('Trigger events', () => {
   describe('claude-code-review.yml', () => {
     const content = readWorkflow(WORKFLOW_FILES[1].path);
 
-    it('triggers on pull_request_target only (not pull_request — avoids double-fire)', () => {
+    it('triggers on pull_request_target (label-based)', () => {
       expect(content).toMatch(/^\s{2}pull_request_target:/m);
-      // pull_request must NOT be a trigger — it would double-fire for same-repo PRs
+    });
+
+    it('triggers on issue_comment (comment-based review)', () => {
+      expect(content).toMatch(/^\s{2}issue_comment:/m);
+    });
+
+    it('does not use pull_request trigger (avoids double-fire and secrets issues on forks)', () => {
       expect(content).not.toMatch(/^\s{2}pull_request:/m);
     });
   });
