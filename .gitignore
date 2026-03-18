@@ -52,6 +52,9 @@ coverage/
 # Claude code skills
 .claude/skills/generated/
 
+# Claude code skills
+.claude/skills/generated/
+
 # Assets (screenshots, images)
 assets/
 

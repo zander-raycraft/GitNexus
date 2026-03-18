@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **feat-phase7-type-resolution** (2075 symbols, 4935 relationships, 157 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (1683 symbols, 4407 relationships, 127 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -97,5 +97,25 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Work in the Ingestion area (135 symbols) | `.claude/skills/generated/ingestion/SKILL.md` |
+| Work in the Workers area (70 symbols) | `.claude/skills/generated/workers/SKILL.md` |
+| Work in the Cli area (63 symbols) | `.claude/skills/generated/cli/SKILL.md` |
+| Work in the Kuzu area (52 symbols) | `.claude/skills/generated/kuzu/SKILL.md` |
+| Work in the Wiki area (52 symbols) | `.claude/skills/generated/wiki/SKILL.md` |
+| Work in the Embeddings area (48 symbols) | `.claude/skills/generated/embeddings/SKILL.md` |
+| Work in the Components area (42 symbols) | `.claude/skills/generated/components/SKILL.md` |
+| Work in the Local area (36 symbols) | `.claude/skills/generated/local/SKILL.md` |
+| Work in the Storage area (36 symbols) | `.claude/skills/generated/storage/SKILL.md` |
+| Work in the Services area (35 symbols) | `.claude/skills/generated/services/SKILL.md` |
+| Work in the Mcp area (32 symbols) | `.claude/skills/generated/mcp/SKILL.md` |
+| Work in the Llm area (30 symbols) | `.claude/skills/generated/llm/SKILL.md` |
+| Work in the Eval area (18 symbols) | `.claude/skills/generated/eval/SKILL.md` |
+| Work in the Bridge area (15 symbols) | `.claude/skills/generated/bridge/SKILL.md` |
+| Work in the Hooks area (14 symbols) | `.claude/skills/generated/hooks/SKILL.md` |
+| Work in the Search area (11 symbols) | `.claude/skills/generated/search/SKILL.md` |
+| Work in the Environments area (11 symbols) | `.claude/skills/generated/environments/SKILL.md` |
+| Work in the Analysis area (10 symbols) | `.claude/skills/generated/analysis/SKILL.md` |
+| Work in the Agents area (9 symbols) | `.claude/skills/generated/agents/SKILL.md` |
+| Work in the Graph area (6 symbols) | `.claude/skills/generated/graph/SKILL.md` |
 
 <!-- gitnexus:end -->
