@@ -1,6 +1,6 @@
 import { KnowledgeGraph } from '../graph/types.js';
 import { ASTCache } from './ast-cache.js';
-import type { SymbolDefinition } from './symbol-table.js';
+import type { SymbolDefinition, SymbolTable } from './symbol-table.js';
 import Parser from 'tree-sitter';
 import type { ResolutionContext } from './resolution-context.js';
 import { TIER_CONFIDENCE, type ResolutionTier } from './resolution-context.js';
@@ -33,6 +33,145 @@ import { typeConfigs } from './type-extractors/index.js';
 import type { LiteralTypeInferrer } from './type-extractors/types.js';
 import type { SyntaxNode } from './utils.js';
 
+/** Per-file resolved type bindings for exported symbols.
+ *  Populated during call processing, consumed by Phase 14 re-resolution pass. */
+export type ExportedTypeMap = Map<string, Map<string, string>>;
+
+const MAX_EXPORTS_PER_FILE = 500;
+const MAX_TYPE_NAME_LENGTH = 256;
+
+/** Build a map of imported callee names → return types for cross-file call-result binding.
+ *  Consulted ONLY when SymbolTable has no unambiguous local match (local-first principle). */
+export function buildImportedReturnTypes(
+  filePath: string,
+  namedImportMap: ReadonlyMap<string, ReadonlyMap<string, { sourcePath: string; exportedName: string }>>,
+  symbolTable: { lookupExactFull(filePath: string, name: string): { returnType?: string } | undefined },
+): ReadonlyMap<string, string> {
+  const result = new Map<string, string>();
+  const fileImports = namedImportMap.get(filePath);
+  if (!fileImports) return result;
+
+  for (const [localName, binding] of fileImports) {
+    const def = symbolTable.lookupExactFull(binding.sourcePath, binding.exportedName);
+    if (!def?.returnType) continue;
+    const simpleReturn = extractReturnTypeName(def.returnType);
+    if (simpleReturn) result.set(localName, simpleReturn);
+  }
+  return result;
+}
+
+/** Build cross-file RAW return types for imported callables.
+ *  Unlike buildImportedReturnTypes (which stores extractReturnTypeName output),
+ *  this stores the raw declared return type string (e.g., 'User[]', 'List<User>').
+ *  Used by lookupRawReturnType for for-loop element extraction via extractElementTypeFromString. */
+export function buildImportedRawReturnTypes(
+  filePath: string,
+  namedImportMap: ReadonlyMap<string, ReadonlyMap<string, { sourcePath: string; exportedName: string }>>,
+  symbolTable: { lookupExactFull(filePath: string, name: string): { returnType?: string } | undefined },
+): ReadonlyMap<string, string> {
+  const result = new Map<string, string>();
+  const fileImports = namedImportMap.get(filePath);
+  if (!fileImports) return result;
+
+  for (const [localName, binding] of fileImports) {
+    const def = symbolTable.lookupExactFull(binding.sourcePath, binding.exportedName);
+    if (!def?.returnType) continue;
+    result.set(localName, def.returnType);
+  }
+  return result;
+}
+
+/** Collect resolved type bindings for exported file-scope symbols.
+ *  Uses graph node isExported flag — does NOT require isExported on SymbolDefinition. */
+function collectExportedBindings(
+  typeEnv: { readonly env: ReadonlyMap<string, ReadonlyMap<string, string>> },
+  filePath: string,
+  symbolTable: { lookupExact(filePath: string, name: string): string | undefined },
+  graph: { getNode(id: string): { properties?: { isExported?: boolean } } | undefined },
+): Map<string, string> | null {
+  const fileScope = typeEnv.env.get('');
+  if (!fileScope || fileScope.size === 0) return null;
+
+  const exported = new Map<string, string>();
+  for (const [varName, typeName] of fileScope) {
+    if (exported.size >= MAX_EXPORTS_PER_FILE) break;
+    if (!typeName || typeName.length > MAX_TYPE_NAME_LENGTH) continue;
+    const nodeId = symbolTable.lookupExact(filePath, varName);
+    if (!nodeId) continue;
+    const node = graph.getNode(nodeId);
+    if (node?.properties?.isExported) {
+      exported.set(varName, typeName);
+    }
+  }
+  return exported.size > 0 ? exported : null;
+}
+
+/** Build ExportedTypeMap from graph nodes — used for worker path where TypeEnv
+ *  is not available in the main thread. Collects returnType/declaredType from
+ *  exported symbols that have callables with known return types. */
+export function buildExportedTypeMapFromGraph(
+  graph: KnowledgeGraph,
+  symbolTable: SymbolTable,
+): ExportedTypeMap {
+  const result: ExportedTypeMap = new Map();
+  graph.forEachNode(node => {
+    if (!node.properties?.isExported) return;
+    if (!node.properties?.filePath || !node.properties?.name) return;
+    const filePath = node.properties.filePath as string;
+    const name = node.properties.name as string;
+    if (!name || name.length > MAX_TYPE_NAME_LENGTH) return;
+    // For callable symbols, use returnType; for properties/variables, use declaredType
+    const def = symbolTable.lookupExactFull(filePath, name);
+    if (!def) return;
+    const typeName = def.returnType ?? def.declaredType;
+    if (!typeName || typeName.length > MAX_TYPE_NAME_LENGTH) return;
+    // Extract simple type name (strip Promise<>, etc.) — reuse shared utility
+    const simpleType = extractReturnTypeName(typeName) ?? typeName;
+    if (!simpleType) return;
+    let fileExports = result.get(filePath);
+    if (!fileExports) { fileExports = new Map(); result.set(filePath, fileExports); }
+    if (fileExports.size < MAX_EXPORTS_PER_FILE) {
+      fileExports.set(name, simpleType);
+    }
+  });
+  return result;
+}
+
+/** Seed cross-file receiver types into pre-extracted call records.
+ *  Fills missing receiverTypeName for single-hop imported variables
+ *  using ExportedTypeMap + namedImportMap — zero disk I/O, zero AST re-parsing.
+ *  Mutates calls in-place. Runs BEFORE processCallsFromExtracted. */
+export function seedCrossFileReceiverTypes(
+  calls: ExtractedCall[],
+  namedImportMap: ReadonlyMap<string, ReadonlyMap<string, { sourcePath: string; exportedName: string }>>,
+  exportedTypeMap: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): { enrichedCount: number } {
+  if (namedImportMap.size === 0 || exportedTypeMap.size === 0) {
+    return { enrichedCount: 0 };
+  }
+  let enrichedCount = 0;
+  for (const call of calls) {
+    if (call.receiverTypeName || !call.receiverName) continue;
+    if (call.callForm !== 'member') continue;
+
+    const fileImports = namedImportMap.get(call.filePath);
+    if (!fileImports) continue;
+
+    const binding = fileImports.get(call.receiverName);
+    if (!binding) continue;
+
+    const upstream = exportedTypeMap.get(binding.sourcePath);
+    if (!upstream) continue;
+
+    const type = upstream.get(binding.exportedName);
+    if (type) {
+      call.receiverTypeName = type;
+      enrichedCount++;
+    }
+  }
+  return { enrichedCount };
+}
+
 // Stdlib methods that preserve the receiver's type identity. When TypeEnv already
 // strips nullable wrappers (Option<User> → User), these chain steps are no-ops
 // for type resolution — the current type passes through unchanged.
@@ -48,7 +187,7 @@ const TYPE_PRESERVING_METHODS = new Set([
  * Returns null if the call is at module/file level (top-level code).
  */
 const findEnclosingFunction = (
-  node: any,
+  node: SyntaxNode,
   filePath: string,
   ctx: ResolutionContext
 ): string | null => {
@@ -138,6 +277,14 @@ export const processCalls = async (
   astCache: ASTCache,
   ctx: ResolutionContext,
   onProgress?: (current: number, total: number) => void,
+  exportedTypeMap?: ExportedTypeMap,
+  /** Phase 14: pre-resolved cross-file bindings to seed into buildTypeEnv. Keyed by filePath → Map<localName, typeName>. */
+  importedBindingsMap?: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  /** Phase 14 E3: cross-file return types for imported callables. Keyed by filePath → Map<calleeName, returnType>.
+   *  Consulted ONLY when SymbolTable has no unambiguous match (local-first principle). */
+  importedReturnTypesMap?: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  /** Phase 14 E3: cross-file RAW return types for for-loop element extraction. Keyed by filePath → Map<calleeName, rawReturnType>. */
+  importedRawReturnTypesMap?: ReadonlyMap<string, ReadonlyMap<string, string>>,
 ): Promise<ExtractedHeritage[]> => {
   const parser = await loadParser();
   const collectedHeritage: ExtractedHeritage[] = [];
@@ -223,7 +370,14 @@ export const processCalls = async (
       }
     }
 
-    const typeEnv = lang ? buildTypeEnv(tree, lang, { symbolTable: ctx.symbols, parentMap }) : null;
+    const importedBindings = importedBindingsMap?.get(file.path);
+    const importedReturnTypes = importedReturnTypesMap?.get(file.path);
+    const importedRawReturnTypes = importedRawReturnTypesMap?.get(file.path);
+    const typeEnv = lang ? buildTypeEnv(tree, lang, { symbolTable: ctx.symbols, parentMap, importedBindings, importedReturnTypes, importedRawReturnTypes }) : null;
+    if (typeEnv && exportedTypeMap) {
+      const fileExports = collectExportedBindings(typeEnv, file.path, ctx.symbols, graph);
+      if (fileExports) exportedTypeMap.set(file.path, fileExports);
+    }
     const callRouter = callRouters[language];
 
     const verifiedReceivers = typeEnv && typeEnv.constructorBindings.length > 0

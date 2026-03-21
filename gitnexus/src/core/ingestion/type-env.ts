@@ -647,6 +647,34 @@ const resolveFixpointBindings = (
 export interface BuildTypeEnvOptions {
   symbolTable?: SymbolTable;
   parentMap?: ReadonlyMap<string, readonly string[]>;
+  /** Pre-resolved bindings from upstream files (Phase 14).
+   *  Seeded into FILE_SCOPE after walk() for names with no local binding.
+   *  Local declarations always take precedence (first-writer-wins). */
+  importedBindings?: ReadonlyMap<string, string>;
+  /** Cross-file return type fallback for imported callables (Phase 14 E3).
+   *  Consulted ONLY when SymbolTable has no unambiguous match.
+   *  Local definitions always take precedence (local-first principle). */
+  importedReturnTypes?: ReadonlyMap<string, string>;
+  /** Cross-file RAW return types for imported callables (Phase 14 E3).
+   *  Stores raw declared return type strings (e.g., 'User[]', 'List<User>').
+   *  Used by lookupRawReturnType for for-loop element extraction. */
+  importedRawReturnTypes?: ReadonlyMap<string, string>;
+}
+
+/** Seed cross-file type bindings into the file scope.
+ *  MUST be called AFTER walk() completes so that local declarations
+ *  (Tier 0/1) always take precedence over imported bindings (first-writer-wins). */
+function seedImportedBindings(
+  env: TypeEnv,
+  importedBindings: ReadonlyMap<string, string>,
+): void {
+  let fileEnv = env.get(FILE_SCOPE);
+  if (!fileEnv) { fileEnv = new Map(); env.set(FILE_SCOPE, fileEnv); }
+  for (const [name, type] of importedBindings) {
+    if (!fileEnv.has(name)) {
+      fileEnv.set(name, type);
+    }
+  }
 }
 
 export const buildTypeEnv = (
@@ -667,24 +695,36 @@ export const buildTypeEnv = (
   const config = typeConfigs[language];
   const bindings: ConstructorBinding[] = [];
 
-  // Build ReturnTypeLookup from optional SymbolTable.
-  // Conservative: returns undefined when callee is ambiguous (0 or 2+ matches).
+  // Build ReturnTypeLookup: SymbolTable is authoritative when it has an unambiguous match.
+  // Cross-file importedReturnTypes are consulted ONLY when SymbolTable has 0 matches.
+  // Ambiguous (2+) → undefined, no cross-file fallback (conservative, local-first principle).
   const returnTypeLookup: ReturnTypeLookup = {
     lookupReturnType(callee: string): string | undefined {
-      if (!symbolTable) return undefined;
-      if (isBuiltInOrNoise(callee)) return undefined;
-      const callables = symbolTable.lookupFuzzyCallable(callee);
-      if (callables.length !== 1) return undefined;
-      const rawReturn = callables[0].returnType;
-      if (!rawReturn) return undefined;
-      return extractReturnTypeName(rawReturn);
+      // SymbolTable is authoritative when it has an unambiguous match
+      if (symbolTable) {
+        if (isBuiltInOrNoise(callee)) return undefined;
+        const callables = symbolTable.lookupFuzzyCallable(callee);
+        if (callables.length === 1) {
+          const rawReturn = callables[0].returnType;
+          if (rawReturn) return extractReturnTypeName(rawReturn);
+        }
+        // Ambiguous (2+) → return undefined (conservative, no cross-file fallback)
+        if (callables.length > 1) return undefined;
+      }
+      // No match (0 results or no symbolTable) → fall back to cross-file
+      return options?.importedReturnTypes?.get(callee);
     },
     lookupRawReturnType(callee: string): string | undefined {
-      if (!symbolTable) return undefined;
-      if (isBuiltInOrNoise(callee)) return undefined;
-      const callables = symbolTable.lookupFuzzyCallable(callee);
-      if (callables.length !== 1) return undefined;
-      return callables[0].returnType;
+      if (symbolTable) {
+        if (isBuiltInOrNoise(callee)) return undefined;
+        const callables = symbolTable.lookupFuzzyCallable(callee);
+        if (callables.length === 1) return callables[0].returnType;
+        // Ambiguous (2+) → return undefined (conservative, no cross-file fallback)
+        if (callables.length > 1) return undefined;
+      }
+      // Cross-file fallback uses importedRawReturnTypes (raw declared types, e.g., 'User[]')
+      // NOT importedReturnTypes (which contains processed/simple types via extractReturnTypeName)
+      return options?.importedRawReturnTypes?.get(callee);
     }
   };
 
@@ -995,6 +1035,12 @@ export const buildTypeEnv = (
   };
 
   walk(tree.rootNode, FILE_SCOPE);
+
+  // Phase 14: Seed cross-file bindings from upstream files AFTER walk
+  // (local declarations from walk() take precedence — first-writer-wins)
+  if (options?.importedBindings && options.importedBindings.size > 0) {
+    seedImportedBindings(env, options.importedBindings);
+  }
 
   resolveFixpointBindings(pendingItems, env, returnTypeLookup, symbolTable, parentMap);
 

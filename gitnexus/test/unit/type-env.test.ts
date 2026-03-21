@@ -4044,4 +4044,201 @@ class App {
     });
   });
 
+  describe('Phase 14: importedBindings seeding', () => {
+    it('seeds imported bindings into file scope for unbound names', () => {
+      // Source has no local declaration of 'config', so the imported binding wins
+      const tree = parse('', TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map([['config', 'Config']]),
+      });
+      const fileScope = env.get('');
+      expect(fileScope?.get('config')).toBe('Config');
+    });
+
+    it('local declarations take precedence over imported bindings', () => {
+      // Source declares config: AppConfig — imported binding for 'config' must not overwrite it
+      const tree = parse('const config: AppConfig = getConfig();', TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map([['config', 'Config']]),
+      });
+      const fileScope = env.get('');
+      // AppConfig from the local annotation wins over the imported 'Config'
+      expect(fileScope?.get('config')).toBe('AppConfig');
+    });
+
+    it('does nothing when importedBindings is empty', () => {
+      const tree = parse('const user: User = getUser();', TypeScript.typescript);
+      const { env: envWithout } = buildTypeEnv(tree, 'typescript');
+      const { env: envWith } = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map(),
+      });
+      // Both envs should produce the same file-scope content
+      const scopeWithout = envWithout.get('');
+      const scopeWith = envWith.get('');
+      expect(scopeWith?.get('user')).toBe(scopeWithout?.get('user'));
+      expect(scopeWith?.size).toBe(scopeWithout?.size);
+    });
+
+    it('seeds multiple bindings', () => {
+      const tree = parse('', TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map([
+          ['user', 'User'],
+          ['config', 'Config'],
+        ]),
+      });
+      const fileScope = env.get('');
+      expect(fileScope?.get('user')).toBe('User');
+      expect(fileScope?.get('config')).toBe('Config');
+    });
+
+    it('seeded bindings are reachable via lookup from a nested call node', () => {
+      // A call inside a function should still be able to look up a file-scope seeded binding
+      const code = `
+function process() {
+  config.validate();
+}`;
+      const tree = parse(code, TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map([['config', 'Config']]),
+      });
+
+      const calls: any[] = [];
+      function findCalls(node: any) {
+        if (node.type === 'call_expression') calls.push(node);
+        for (let i = 0; i < node.childCount; i++) findCalls(node.child(i));
+      }
+      findCalls(tree.rootNode);
+
+      // config.validate() — lookup 'config' from inside the process function scope
+      expect(typeEnv.lookup('config', calls[0])).toBe('Config');
+    });
+
+    it('seeds bindings with no conflict when local file has unrelated declarations', () => {
+      // File has 'user' declared locally; 'config' comes from importedBindings
+      const tree = parse('const user: User = getUser();', TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript', {
+        importedBindings: new Map([['config', 'Config']]),
+      });
+      const fileScope = env.get('');
+      // Local binding preserved
+      expect(fileScope?.get('user')).toBe('User');
+      // Imported binding added for the name that had no local declaration
+      expect(fileScope?.get('config')).toBe('Config');
+    });
+  });
+
+  describe('importedReturnTypes (Phase 14 E3)', () => {
+    // Minimal mock SymbolTable that returns a known callable
+    const makeSymbolTable = (
+      callables: Array<{ name: string; returnType?: string }>,
+    ) => ({
+      lookupFuzzyCallable: (name: string) =>
+        callables
+          .filter(c => c.name === name)
+          .map(c => ({ nodeId: 'n1', filePath: 'src.ts', type: 'Function' as const, returnType: c.returnType })),
+      lookupFuzzy: () => [],
+      lookupExact: () => undefined,
+      lookupExactFull: () => undefined,
+      add: () => {},
+      getStats: () => ({ fileCount: 0, globalSymbolCount: 0 }),
+      clear: () => {},
+    });
+
+    it('SymbolTable has unambiguous match → uses it, ignores cross-file', () => {
+      // SymbolTable knows getConfig() returns Config (SymbolType)
+      // importedReturnTypes says getConfig → WrongType — SymbolTable must win
+      const symbolTable = makeSymbolTable([{ name: 'getConfig', returnType: 'Config' }]);
+      const tree = parse('const c = getConfig();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        symbolTable: symbolTable as any,
+        importedReturnTypes: new Map([['getConfig', 'WrongType']]),
+      });
+      // SymbolTable result (Config) wins over cross-file fallback (WrongType)
+      expect(flatGet(typeEnv.env, 'c')).toBe('Config');
+    });
+
+    it('SymbolTable has no match (0 results) → falls back to cross-file', () => {
+      // SymbolTable knows nothing about getConfig
+      const symbolTable = makeSymbolTable([]);
+      const tree = parse('const c = getConfig();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        symbolTable: symbolTable as any,
+        importedReturnTypes: new Map([['getConfig', 'Config']]),
+      });
+      // Cross-file fallback provides Config
+      expect(flatGet(typeEnv.env, 'c')).toBe('Config');
+    });
+
+    it('SymbolTable has 2+ matches (ambiguous) → returns undefined, NO cross-file fallback', () => {
+      // Two overloads of process() — ambiguous → must NOT fall back to cross-file
+      const symbolTable = makeSymbolTable([
+        { name: 'process', returnType: 'User' },
+        { name: 'process', returnType: 'Admin' },
+      ]);
+      const tree = parse('const r = process();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        symbolTable: symbolTable as any,
+        importedReturnTypes: new Map([['process', 'User']]),
+      });
+      // Ambiguous → conservative → no binding produced
+      expect(flatGet(typeEnv.env, 'r')).toBeUndefined();
+    });
+
+    it('no SymbolTable → uses cross-file return types directly', () => {
+      const tree = parse('const c = getConfig();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        importedReturnTypes: new Map([['getConfig', 'Config']]),
+      });
+      expect(flatGet(typeEnv.env, 'c')).toBe('Config');
+    });
+
+    it('cross-file has entry but SymbolTable covers it → SymbolTable wins', () => {
+      // SymbolTable provides the authoritative return type; cross-file entry is ignored
+      const symbolTable = makeSymbolTable([{ name: 'getUser', returnType: 'User' }]);
+      const tree = parse('const u = getUser();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        symbolTable: symbolTable as any,
+        importedReturnTypes: new Map([['getUser', 'CrossFileUser']]),
+      });
+      // SymbolTable result (User) wins
+      expect(flatGet(typeEnv.env, 'u')).toBe('User');
+    });
+
+    it('does nothing when importedReturnTypes is absent', () => {
+      const tree = parse('const c = getConfig();', TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript');
+      // No annotation, no SymbolTable, no cross-file → no binding
+      expect(flatGet(typeEnv.env, 'c')).toBeUndefined();
+    });
+
+    it('resolved cross-file callee enables downstream call edges via lookup', () => {
+      // File has: const c = getConfig(); c.validate();
+      // importedReturnTypes maps getConfig → Config
+      // After fixpoint, c should be typed as Config, making lookup('c', ...) return 'Config'
+      const code = `
+function process() {
+  const c = getConfig();
+  c.validate();
+}`;
+      const tree = parse(code, TypeScript.typescript);
+      const typeEnv = buildTypeEnv(tree, 'typescript', {
+        importedReturnTypes: new Map([['getConfig', 'Config']]),
+      });
+
+      const calls: any[] = [];
+      function findCalls(node: any) {
+        if (node.type === 'call_expression') calls.push(node);
+        for (let i = 0; i < node.childCount; i++) findCalls(node.child(i));
+      }
+      findCalls(tree.rootNode);
+
+      // calls[0] = getConfig(), calls[1] = c.validate()
+      // From inside process(), c should resolve to Config
+      const validateCall = calls.find((n: any) => n.text.includes('validate'));
+      expect(validateCall).toBeDefined();
+      expect(typeEnv.lookup('c', validateCall)).toBe('Config');
+    });
+  });
+
 });
