@@ -226,7 +226,7 @@ export const loadGraphToLbug = async (
     }
 
     // Execute batched prepared statements per label pair
-    const SUB_BATCH_SIZE = 4;
+    // Prepare once per (fromLabel, toLabel) pair and reuse across all rows
     for (const [key, rels] of relsByLabelPair) {
       const [fromLabel, toLabel] = key.split(':');
       const cypher = `
@@ -235,34 +235,38 @@ export const loadGraphToLbug = async (
         CREATE (a)-[:${REL_TABLE_NAME} {type: $relType, confidence: $confidence, reason: $reason, step: $step}]->(b)
       `;
 
-      for (let i = 0; i < rels.length; i += SUB_BATCH_SIZE) {
-        const subBatch = rels.slice(i, i + SUB_BATCH_SIZE);
-        const stmt = await conn.prepare(cypher);
-        if (!stmt.isSuccess()) {
-          const errMsg = await stmt.getErrorMessage();
-          if (import.meta.env.DEV) console.warn(`Prepare failed for ${key}: ${errMsg}`);
-          skippedRels += subBatch.length;
-          await stmt.close();
-          continue;
-        }
+      const stmt = await conn.prepare(cypher);
+      if (!stmt.isSuccess()) {
+        const errMsg = await stmt.getErrorMessage();
+        if (import.meta.env.DEV) console.warn(`Prepare failed for ${key}: ${errMsg}`);
+        skippedRels += rels.length;
+        await stmt.close();
+        continue;
+      }
 
-        try {
-          for (const r of subBatch) {
-            try {
-              await conn.execute(stmt, r);
-              insertedRels++;
-            } catch (err) {
-              skippedRels++;
-              const statKey = `${r.relType}:${fromLabel}->${toLabel}`;
-              skippedRelStats.set(statKey, (skippedRelStats.get(statKey) || 0) + 1);
-              if (import.meta.env.DEV) {
-                console.warn(`⚠️ Skipped: ${statKey} | "${r.fromId}" → "${r.toId}" | ${err instanceof Error ? err.message : String(err)}`);
-              }
+      try {
+        for (let i = 0; i < rels.length; i++) {
+          try {
+            await conn.execute(stmt, rels[i]);
+            insertedRels++;
+          } catch (err) {
+            skippedRels++;
+            const r = rels[i];
+            const statKey = `${r.relType}:${fromLabel}->${toLabel}`;
+            skippedRelStats.set(statKey, (skippedRelStats.get(statKey) || 0) + 1);
+            if (import.meta.env.DEV) {
+              console.warn(`⚠️ Skipped: ${statKey} | "${r.fromId}" → "${r.toId}" | ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-        } finally {
-          await stmt.close();
+
+          // Yield to event loop every 500 relations
+          if (i > 0 && i % 500 === 0) {
+            await new Promise(r => setTimeout(r, 0));
+          }
         }
+      } finally {
+        await stmt.close();
+      }
 
         // Yield to event loop between sub-batches
         if (i + SUB_BATCH_SIZE < rels.length) {
