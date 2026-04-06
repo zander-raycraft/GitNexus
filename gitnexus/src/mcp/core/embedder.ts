@@ -1,12 +1,17 @@
 /**
  * Embedder Module (Read-Only)
- * 
+ *
  * Singleton factory for transformers.js embedding pipeline.
  * For MCP, we only need to compute query embeddings, not batch embed.
  */
 
 import { pipeline, env, type FeatureExtractionPipeline } from '@huggingface/transformers';
-import { isHttpMode, getHttpDimensions, httpEmbedQuery } from '../../core/embeddings/http-client.js';
+import {
+  isHttpMode,
+  getHttpDimensions,
+  httpEmbedQuery,
+} from '../../core/embeddings/http-client.js';
+import { silenceStdout, restoreStdout, realStderrWrite } from '../../core/lbug/pool-adapter.js';
 
 // Model config
 const MODEL_ID = 'Snowflake/snowflake-arctic-embed-xs';
@@ -37,35 +42,31 @@ export const initEmbedder = async (): Promise<FeatureExtractionPipeline> => {
   initPromise = (async () => {
     try {
       env.allowLocalModels = false;
-      
+
       console.error('GitNexus: Loading embedding model (first search may take a moment)...');
 
       // Try GPU first (DirectML on Windows, CUDA on Linux), fall back to CPU
       const isWindows = process.platform === 'win32';
       const gpuDevice = isWindows ? 'dml' : 'cuda';
       const devicesToTry: Array<'dml' | 'cuda' | 'cpu'> = [gpuDevice, 'cpu'];
-      
+
       for (const device of devicesToTry) {
         try {
           // Silence stdout and stderr during model load — ONNX Runtime and transformers.js
           // may write progress/init messages that corrupt MCP stdio protocol or produce
           // noisy warnings (e.g. node assignment to execution providers).
-          const origStdout = process.stdout.write;
-          const origStderr = process.stderr.write;
-          process.stdout.write = (() => true) as any;
+          // Use the centralized silenceStdout() to avoid conflicts with pool-adapter's
+          // own stdout patching (independent patching caused restore-order bugs).
+          silenceStdout();
           process.stderr.write = (() => true) as any;
           try {
-            embedderInstance = await (pipeline as any)(
-              'feature-extraction',
-              MODEL_ID,
-              {
-                device: device,
-                dtype: 'fp32',
-              }
-            );
+            embedderInstance = await (pipeline as any)('feature-extraction', MODEL_ID, {
+              device: device,
+              dtype: 'fp32',
+            });
           } finally {
-            process.stdout.write = origStdout;
-            process.stderr.write = origStderr;
+            restoreStdout();
+            process.stderr.write = realStderrWrite;
           }
           console.error(`GitNexus: Embedding model loaded (${device})`);
           return embedderInstance!;
@@ -102,12 +103,12 @@ export const embedQuery = async (query: string): Promise<number[]> => {
   }
 
   const embedder = await initEmbedder();
-  
+
   const result = await embedder(query, {
     pooling: 'mean',
     normalize: true,
   });
-  
+
   return Array.from(result.data as ArrayLike<number>);
 };
 

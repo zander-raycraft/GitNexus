@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { shouldIgnorePath, isHardcodedIgnoredDirectory, loadIgnoreRules, createIgnoreFilter } from '../../src/config/ignore-service.js';
+import {
+  shouldIgnorePath,
+  isHardcodedIgnoredDirectory,
+  loadIgnoreRules,
+  createIgnoreFilter,
+} from '../../src/config/ignore-service.js';
 
 describe('shouldIgnorePath', () => {
   describe('version control directories', () => {
@@ -20,8 +25,14 @@ describe('shouldIgnorePath', () => {
 
   describe('dependency directories', () => {
     it.each([
-      'node_modules', 'vendor', 'venv', '.venv', '__pycache__',
-      'site-packages', '.mypy_cache', '.pytest_cache',
+      'node_modules',
+      'vendor',
+      'venv',
+      '.venv',
+      '__pycache__',
+      'site-packages',
+      '.mypy_cache',
+      '.pytest_cache',
     ])('ignores %s directory', (dir) => {
       expect(shouldIgnorePath(`project/${dir}/some-file.js`)).toBe(true);
     });
@@ -29,43 +40,83 @@ describe('shouldIgnorePath', () => {
 
   describe('build output directories', () => {
     it.each([
-      'dist', 'build', 'out', 'output', 'bin', 'obj', 'target',
-      '.next', '.nuxt', '.vercel', '.parcel-cache', '.turbo',
+      'dist',
+      'build',
+      'out',
+      'output',
+      'bin',
+      'obj',
+      'target',
+      '.next',
+      '.nuxt',
+      '.vercel',
+      '.parcel-cache',
+      '.turbo',
     ])('ignores %s directory', (dir) => {
       expect(shouldIgnorePath(`${dir}/bundle.js`)).toBe(true);
     });
   });
 
   describe('test/coverage directories', () => {
-    it.each(['coverage', '__tests__', '__mocks__', '.nyc_output'])('ignores %s directory', (dir) => {
-      expect(shouldIgnorePath(`${dir}/results.json`)).toBe(true);
-    });
+    it.each(['coverage', '__tests__', '__mocks__', '.nyc_output'])(
+      'ignores %s directory',
+      (dir) => {
+        expect(shouldIgnorePath(`${dir}/results.json`)).toBe(true);
+      },
+    );
   });
 
   describe('ignored file extensions', () => {
     it.each([
       // Images
-      '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.gif',
+      '.svg',
+      '.ico',
+      '.webp',
       // Archives
-      '.zip', '.tar', '.gz', '.rar',
+      '.zip',
+      '.tar',
+      '.gz',
+      '.rar',
       // Binary/Compiled
-      '.exe', '.dll', '.so', '.dylib', '.class', '.jar', '.pyc', '.wasm',
+      '.exe',
+      '.dll',
+      '.so',
+      '.dylib',
+      '.class',
+      '.jar',
+      '.pyc',
+      '.wasm',
       // Documents
-      '.pdf', '.doc', '.docx',
+      '.pdf',
+      '.doc',
+      '.docx',
       // Media
-      '.mp4', '.mp3', '.wav',
+      '.mp4',
+      '.mp3',
+      '.wav',
       // Fonts
-      '.woff', '.woff2', '.ttf',
+      '.woff',
+      '.woff2',
+      '.ttf',
       // Databases
-      '.db', '.sqlite',
+      '.db',
+      '.sqlite',
       // Source maps
       '.map',
       // Lock files
       '.lock',
       // Certificates
-      '.pem', '.key', '.crt',
+      '.pem',
+      '.key',
+      '.crt',
       // Data files
-      '.csv', '.parquet', '.pkl',
+      '.csv',
+      '.parquet',
+      '.pkl',
     ])('ignores files with %s extension', (ext) => {
       expect(shouldIgnorePath(`assets/file${ext}`)).toBe(true);
     });
@@ -73,12 +124,25 @@ describe('shouldIgnorePath', () => {
 
   describe('ignored files by exact name', () => {
     it.each([
-      'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
-      'composer.lock', 'Cargo.lock', 'go.sum',
-      '.gitignore', '.gitattributes', '.npmrc', '.editorconfig',
-      '.prettierrc', '.eslintignore', '.dockerignore',
-      'LICENSE', 'LICENSE.md', 'CHANGELOG.md',
-      '.env', '.env.local', '.env.production',
+      'package-lock.json',
+      'yarn.lock',
+      'pnpm-lock.yaml',
+      'composer.lock',
+      'Cargo.lock',
+      'go.sum',
+      '.gitignore',
+      '.gitattributes',
+      '.npmrc',
+      '.editorconfig',
+      '.prettierrc',
+      '.eslintignore',
+      '.dockerignore',
+      'LICENSE',
+      'LICENSE.md',
+      'CHANGELOG.md',
+      '.env',
+      '.env.local',
+      '.env.production',
     ])('ignores %s', (fileName) => {
       expect(shouldIgnorePath(fileName)).toBe(true);
       expect(shouldIgnorePath(`project/${fileName}`)).toBe(true);
@@ -204,7 +268,10 @@ describe('loadIgnoreRules', () => {
   });
 
   it('handles comments and blank lines', async () => {
-    await fs.writeFile(path.join(tmpDir, '.gitignore'), '# comment\n\ndata/\n\n# another comment\n');
+    await fs.writeFile(
+      path.join(tmpDir, '.gitignore'),
+      '# comment\n\ndata/\n\n# another comment\n',
+    );
     const ig = await loadIgnoreRules(tmpDir);
     expect(ig).not.toBeNull();
     expect(ig!.ignores('data/file.txt')).toBe(true);
@@ -264,6 +331,69 @@ describe('createIgnoreFilter', () => {
     expect(filter.childrenIgnored(srcPath)).toBe(false);
 
     await fs.unlink(path.join(tmpDir, '.gitignore'));
+  });
+
+  it('childrenIgnored respects negation patterns (exclude-all + whitelist)', async () => {
+    // Reproduces https://github.com/abhigyanpatwari/GitNexus/issues/596
+    // Pattern: `*` (exclude all) + `!iOS/` + `!iOS/**` (whitelist iOS)
+    await fs.writeFile(
+      path.join(tmpDir, '.gitnexusignore'),
+      '*\n!iOS/\n!iOS/**\n!backend/\n!backend/living_plan/\n!backend/living_plan/**\n',
+    );
+    const filter = await createIgnoreFilter(tmpDir);
+
+    // Whitelisted directories must NOT be pruned
+    const iosPath = { name: 'iOS', relative: () => 'iOS' } as any;
+    expect(filter.childrenIgnored(iosPath)).toBe(false);
+
+    const backendPath = { name: 'backend', relative: () => 'backend' } as any;
+    expect(filter.childrenIgnored(backendPath)).toBe(false);
+
+    const livingPlanPath = { name: 'living_plan', relative: () => 'backend/living_plan' } as any;
+    expect(filter.childrenIgnored(livingPlanPath)).toBe(false);
+
+    // Non-whitelisted directories must still be pruned
+    const srcPath = { name: 'src', relative: () => 'src' } as any;
+    expect(filter.childrenIgnored(srcPath)).toBe(true);
+
+    const libPath = { name: 'lib', relative: () => 'lib' } as any;
+    expect(filter.childrenIgnored(libPath)).toBe(true);
+
+    await fs.unlink(path.join(tmpDir, '.gitnexusignore'));
+  });
+
+  it('childrenIgnored respects negation patterns without trailing slash (!dir vs !dir/)', async () => {
+    // Per gitignore spec: `!iOS` (no slash) negates both files and directories
+    // named `iOS`, while `!iOS/` is directory-only. The `ignore` package
+    // normalizes both forms so that `ig.ignores('iOS/')` returns false in either case.
+    // Ref: https://github.com/kaelzhang/node-ignore#2-filenames-and-dirnames (see #596)
+    await fs.writeFile(path.join(tmpDir, '.gitnexusignore'), '*\n!iOS\n!iOS/**\n');
+    const filter = await createIgnoreFilter(tmpDir);
+
+    // Bare negation `!iOS` must also un-ignore the iOS/ directory
+    const iosPath = { name: 'iOS', relative: () => 'iOS' } as any;
+    expect(filter.childrenIgnored(iosPath)).toBe(false);
+
+    // Non-whitelisted directories still pruned
+    const srcPath = { name: 'src', relative: () => 'src' } as any;
+    expect(filter.childrenIgnored(srcPath)).toBe(true);
+
+    await fs.unlink(path.join(tmpDir, '.gitnexusignore'));
+  });
+
+  it('ignored respects negation patterns for files under whitelisted directories', async () => {
+    await fs.writeFile(path.join(tmpDir, '.gitnexusignore'), '*\n!iOS/\n!iOS/**\n');
+    const filter = await createIgnoreFilter(tmpDir);
+
+    // Files under whitelisted directory should NOT be ignored
+    const swiftFile = { name: 'App.swift', relative: () => 'iOS/App.swift' } as any;
+    expect(filter.ignored(swiftFile)).toBe(false);
+
+    // Files outside whitelisted directory should be ignored
+    const pyFile = { name: 'main.py', relative: () => 'scripts/main.py' } as any;
+    expect(filter.ignored(pyFile)).toBe(true);
+
+    await fs.unlink(path.join(tmpDir, '.gitnexusignore'));
   });
 
   it('ignored returns true for file-glob patterns like *.log', async () => {

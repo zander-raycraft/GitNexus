@@ -1,4 +1,4 @@
-import type { NodeLabel } from '../graph/types.js';
+import type { NodeLabel } from 'gitnexus-shared';
 
 export interface SymbolDefinition {
   nodeId: string;
@@ -29,7 +29,14 @@ export interface SymbolTable {
     name: string,
     nodeId: string,
     type: NodeLabel,
-    metadata?: { parameterCount?: number; requiredParameterCount?: number; parameterTypes?: string[]; returnType?: string; declaredType?: string; ownerId?: string }
+    metadata?: {
+      parameterCount?: number;
+      requiredParameterCount?: number;
+      parameterTypes?: string[];
+      returnType?: string;
+      declaredType?: string;
+      ownerId?: string;
+    },
   ) => void;
 
   /**
@@ -37,7 +44,7 @@ export interface SymbolTable {
    * Returns the Node ID if found
    */
   lookupExact: (filePath: string, name: string) => string | undefined;
-  
+
   /**
    * High Confidence: Look for a symbol in a specific file, returning full definition.
    * Includes type information needed for heritage resolution (Class vs Interface).
@@ -73,10 +80,19 @@ export interface SymbolTable {
   lookupFieldByOwner: (ownerNodeId: string, fieldName: string) => SymbolDefinition | undefined;
 
   /**
+   * Look up a method by its owning class nodeId and method name.
+   * O(1) via dedicated eagerly-populated index keyed by `ownerNodeId\0methodName`.
+   * For overloaded methods (same owner + name): returns the first match when all
+   * overloads share the same returnType, undefined when return types differ (ambiguous).
+   * Used by walkMixedChain for deterministic cross-class chain resolution.
+   */
+  lookupMethodByOwner: (ownerNodeId: string, methodName: string) => SymbolDefinition | undefined;
+
+  /**
    * Debugging: See how many symbols are tracked
    */
   getStats: () => { fileCount: number; globalSymbolCount: number };
-  
+
   /**
    * Cleanup memory
    */
@@ -102,6 +118,10 @@ export const createSymbolTable = (): SymbolTable => {
   // Only Property symbols with ownerId and declaredType are indexed.
   const fieldByOwner = new Map<string, SymbolDefinition>();
 
+  // 5. Eagerly-populated Method Index — keyed by "ownerNodeId\0methodName".
+  // Method symbols with ownerId are indexed. Supports overloads (array values).
+  const methodByOwner = new Map<string, SymbolDefinition[]>();
+
   const CALLABLE_TYPES = new Set(['Function', 'Method', 'Constructor']);
 
   const add = (
@@ -109,15 +129,28 @@ export const createSymbolTable = (): SymbolTable => {
     name: string,
     nodeId: string,
     type: NodeLabel,
-    metadata?: { parameterCount?: number; requiredParameterCount?: number; parameterTypes?: string[]; returnType?: string; declaredType?: string; ownerId?: string }
+    metadata?: {
+      parameterCount?: number;
+      requiredParameterCount?: number;
+      parameterTypes?: string[];
+      returnType?: string;
+      declaredType?: string;
+      ownerId?: string;
+    },
   ) => {
     const def: SymbolDefinition = {
       nodeId,
       filePath,
       type,
-      ...(metadata?.parameterCount !== undefined ? { parameterCount: metadata.parameterCount } : {}),
-      ...(metadata?.requiredParameterCount !== undefined ? { requiredParameterCount: metadata.requiredParameterCount } : {}),
-      ...(metadata?.parameterTypes !== undefined ? { parameterTypes: metadata.parameterTypes } : {}),
+      ...(metadata?.parameterCount !== undefined
+        ? { parameterCount: metadata.parameterCount }
+        : {}),
+      ...(metadata?.requiredParameterCount !== undefined
+        ? { requiredParameterCount: metadata.requiredParameterCount }
+        : {}),
+      ...(metadata?.parameterTypes !== undefined
+        ? { parameterTypes: metadata.parameterTypes }
+        : {}),
       ...(metadata?.returnType !== undefined ? { returnType: metadata.returnType } : {}),
       ...(metadata?.declaredType !== undefined ? { declaredType: metadata.declaredType } : {}),
       ...(metadata?.ownerId !== undefined ? { ownerId: metadata.ownerId } : {}),
@@ -150,6 +183,17 @@ export const createSymbolTable = (): SymbolTable => {
     }
     globalIndex.get(name)!.push(def);
 
+    // C2. Methods with ownerId go to methodByOwner index (in addition to globalIndex).
+    if (type === 'Method' && metadata?.ownerId) {
+      const key = `${metadata.ownerId}\0${name}`;
+      const existing = methodByOwner.get(key);
+      if (existing) {
+        existing.push(def);
+      } else {
+        methodByOwner.set(key, [def]);
+      }
+    }
+
     // D. Invalidate the lazy callable index only when adding callable types
     if (CALLABLE_TYPES.has(type)) {
       callableIndex = null;
@@ -179,20 +223,40 @@ export const createSymbolTable = (): SymbolTable => {
       // Build the callable index lazily on first use
       callableIndex = new Map();
       for (const [symName, defs] of globalIndex) {
-        const callables = defs.filter(d => CALLABLE_TYPES.has(d.type));
+        const callables = defs.filter((d) => CALLABLE_TYPES.has(d.type));
         if (callables.length > 0) callableIndex.set(symName, callables);
       }
     }
     return callableIndex.get(name) ?? [];
   };
 
-  const lookupFieldByOwner = (ownerNodeId: string, fieldName: string): SymbolDefinition | undefined => {
+  const lookupFieldByOwner = (
+    ownerNodeId: string,
+    fieldName: string,
+  ): SymbolDefinition | undefined => {
     return fieldByOwner.get(`${ownerNodeId}\0${fieldName}`);
+  };
+
+  const lookupMethodByOwner = (
+    ownerNodeId: string,
+    methodName: string,
+  ): SymbolDefinition | undefined => {
+    const defs = methodByOwner.get(`${ownerNodeId}\0${methodName}`);
+    if (!defs || defs.length === 0) return undefined;
+    if (defs.length === 1) return defs[0];
+    // Multiple overloads: return first if all share the same defined returnType (safe for chain resolution).
+    // Return undefined if return types differ or are absent (truly ambiguous — can't determine which overload).
+    const firstReturnType = defs[0].returnType;
+    if (firstReturnType === undefined) return undefined;
+    for (let i = 1; i < defs.length; i++) {
+      if (defs[i].returnType !== firstReturnType) return undefined;
+    }
+    return defs[0];
   };
 
   const getStats = () => ({
     fileCount: fileIndex.size,
-    globalSymbolCount: globalIndex.size
+    globalSymbolCount: globalIndex.size,
   });
 
   const clear = () => {
@@ -200,7 +264,19 @@ export const createSymbolTable = (): SymbolTable => {
     globalIndex.clear();
     callableIndex = null;
     fieldByOwner.clear();
+    methodByOwner.clear();
   };
 
-  return { add, lookupExact, lookupExactFull, lookupExactAll, lookupFuzzy, lookupFuzzyCallable, lookupFieldByOwner, getStats, clear };
+  return {
+    add,
+    lookupExact,
+    lookupExactFull,
+    lookupExactAll,
+    lookupFuzzy,
+    lookupFuzzyCallable,
+    lookupFieldByOwner,
+    lookupMethodByOwner,
+    getStats,
+    clear,
+  };
 };
