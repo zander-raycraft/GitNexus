@@ -38,6 +38,8 @@ buildTypeEnv(tree, language, symbolTable?)
 
 The `TypeEnvironment` is built once per file. `call-processor.ts` then uses `lookup()` to determine receiver types and narrow candidate symbols from the `SymbolTable`.
 
+> **Note (RFC #909 Ring 3):** `call-processor.ts` is the legacy call-resolution path. Languages in `MIGRATED_LANGUAGES` (see `gitnexus/src/core/ingestion/registry-primary-flag.ts`) route through the scope-resolution pipeline instead — see `ARCHITECTURE.md § Scope-Resolution Pipeline`. TypeEnv is still built for migrated languages in the parse worker, but receiver typing flows through `ParsedTypeBinding` + `ScopeResolutionIndexes` rather than `call-processor.ts`.
+
 ---
 
 ## Architecture
@@ -375,27 +377,27 @@ So return-type-aware receiver inference already exists in a constrained downstre
 
 ## Language Feature Matrix
 
-| Feature | TS | JS | Java | Kotlin | C# | Go | Rust | Python | PHP | Ruby | Swift | C++ | C |
-|---------|:--:|:--:|:----:|:------:|:--:|:--:|:----:|:------:|:---:|:----:|:-----:|:---:|:-:|
-| Declarations | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Parameters | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Initializer / constructor inference | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Constructor binding scan | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| For-loop element types | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes††† | Yes | Yes |
-| Pattern binding | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No | No | Partial‡‡‡ | No | No |
-| Assignment chains | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes |
-| Field/property type resolution | Yes | No† | Yes | Yes | Yes | Yes | Yes | Yes* | Yes | YARD | No | Yes | No‡ |
-| Comment-based types | JSDoc | JSDoc | No | No | No | No | No | No | PHPDoc | YARD | No | No | No |
-| Return type extraction | JSDoc | JSDoc | No | No | No | No | No | No | PHPDoc | YARD | No | No | No |
-| Call-result variable binding | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes¶ | Yes††† | Yes | No |
-| Field access binding | Yes | No† | Yes | Yes | Yes | Yes | Yes | No‖ | Yes | N/A | Yes††† | Yes | No |
-| Method-call-result binding | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes¶ | Yes††† | Yes | No |
-| Write access (ACCESSES write) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes§ | Yes | Yes | Yes | No |
-| Parameter types extracted | Yes** | No | Yes | Yes | Yes | Yes | Yes | Partial†† | No | No | No | Yes | No |
-| Method overload disambiguation | Yes** | No | Yes | Yes | Yes | No | No | No | No | No | No | Yes | No |
-| Constructor-visible virtual dispatch | Yes | No | Yes | Yes‡‡ | Yes | No | No | No | No | No | No | Yes§§ | No |
-| Optional parameter arity resolution | Yes | No | No | Yes | Yes | No | No | Yes | Yes | Yes | No | Yes | No |
-| Cross-file binding propagation | Yes | Yes | Yes‖‖ | Yes | Yes¶¶ | Yes*** | Yes | Yes | Partial | Yes*** | Yes*** | Yes*** | Yes*** |
+| Feature | TS | JS | Java | Kotlin | C# | Go | Rust | Python | PHP | Ruby | Swift | C++ | C | Dart |
+|---------|:--:|:--:|:----:|:------:|:--:|:--:|:----:|:------:|:---:|:----:|:-----:|:---:|:-:|:----:|
+| Declarations | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Parameters | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Initializer / constructor inference | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Constructor binding scan | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| For-loop element types | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes††† | Yes | Yes | Yes |
+| Pattern binding | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No | No | Partial‡‡‡ | No | No | No |
+| Assignment chains | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Field/property type resolution | Yes | No† | Yes | Yes | Yes | Yes | Yes | Yes* | Yes | YARD | No | Yes | No‡ | No |
+| Comment-based types | JSDoc | JSDoc | No | No | No | No | No | No | PHPDoc | YARD | No | No | No | No |
+| Return type extraction | JSDoc | JSDoc | No | No | No | No | No | No | PHPDoc | YARD | No | No | No | No |
+| Call-result variable binding | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes¶ | Yes††† | Yes | No | Yes |
+| Field access binding | Yes | No† | Yes | Yes | Yes | Yes | Yes | No‖ | Yes | N/A | Yes††† | Yes | No | Yes |
+| Method-call-result binding | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes¶ | Yes††† | Yes | No | Yes |
+| Write access (ACCESSES write) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes§ | Yes | Yes | Yes | No | Yes |
+| Parameter types extracted | Yes** | No | Yes | Yes | Yes | Yes | Yes | Partial†† | No | No | No | Yes | No | No |
+| Method overload disambiguation | Yes** | No | Yes | Yes | Yes | No | No | No | No | No | No | Yes | No | No |
+| Constructor-visible virtual dispatch | Yes | No | Yes | Yes‡‡ | Yes | No | No | No | No | No | No | Yes§§ | No | Yes |
+| Optional parameter arity resolution | Yes | No | No | Yes | Yes | No | No | Yes | Yes | Yes | No | Yes | No | No |
+| Cross-file binding propagation | Yes | Yes | Yes‖‖ | Yes | Yes¶¶ | Yes*** | Yes | Yes | Partial | Yes*** | Yes*** | Yes*** | Yes*** | Yes*** |
 
 \* Python class-level annotated attributes (`address: Address`) now resolve `declaredType` correctly. The `self.x` instance attribute pattern is not yet supported.
 

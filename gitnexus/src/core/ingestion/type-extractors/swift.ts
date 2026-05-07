@@ -1,7 +1,22 @@
-import type { SyntaxNode } from '../utils.js';
-import type { LanguageTypeConfig, ParameterExtractor, TypeBindingExtractor, InitializerExtractor, ClassNameLookup, ConstructorBindingScanner, PendingAssignmentExtractor, PendingAssignment, ForLoopExtractor } from './types.js';
-import { extractSimpleTypeName, extractVarName, hasTypeAnnotation, extractElementTypeFromString, resolveIterableElementType } from './shared.js';
-import { findChild } from '../resolvers/utils.js';
+import { findChild, type SyntaxNode } from '../utils/ast-helpers.js';
+import type {
+  LanguageTypeConfig,
+  ParameterExtractor,
+  TypeBindingExtractor,
+  InitializerExtractor,
+  ClassNameLookup,
+  ConstructorBindingScanner,
+  PendingAssignmentExtractor,
+  PendingAssignment,
+  ForLoopExtractor,
+} from './types.js';
+import {
+  extractSimpleTypeName,
+  extractVarName,
+  hasTypeAnnotation,
+  extractElementTypeFromString,
+  resolveIterableElementType,
+} from './shared.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'property_declaration',
@@ -9,9 +24,7 @@ const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'guard_statement',
 ]);
 
-const FOR_LOOP_NODE_TYPES: ReadonlySet<string> = new Set([
-  'for_statement',
-]);
+const FOR_LOOP_NODE_TYPES: ReadonlySet<string> = new Set(['for_statement']);
 
 /**
  * Unwrap Swift `await_expression` and `try_expression` nodes to find the inner
@@ -28,13 +41,18 @@ function unwrapSwiftExpression(node: SyntaxNode): SyntaxNode {
   return node;
 }
 
+function swiftNavigationSuffixName(node: SyntaxNode | null): string | undefined {
+  return node?.type === 'navigation_suffix' ? node.lastNamedChild?.text : node?.text;
+}
+
 /** Swift: let x: Foo = ... */
-const extractDeclaration: TypeBindingExtractor = (node: SyntaxNode, env: Map<string, string>): void => {
+const extractDeclaration: TypeBindingExtractor = (
+  node: SyntaxNode,
+  env: Map<string, string>,
+): void => {
   // Swift property_declaration has pattern and type_annotation
-  const pattern = node.childForFieldName('pattern')
-    ?? findChild(node, 'pattern');
-  const typeAnnotation = node.childForFieldName('type')
-    ?? findChild(node, 'type_annotation');
+  const pattern = node.childForFieldName('pattern') ?? findChild(node, 'pattern');
+  const typeAnnotation = node.childForFieldName('type') ?? findChild(node, 'type_annotation');
   if (!pattern || !typeAnnotation) return;
   const varName = extractVarName(pattern) ?? pattern.text;
   const typeName = extractSimpleTypeName(typeAnnotation);
@@ -47,8 +65,7 @@ const extractParameter: ParameterExtractor = (node: SyntaxNode, env: Map<string,
   let typeNode: SyntaxNode | null = null;
 
   if (node.type === 'parameter') {
-    nameNode = node.childForFieldName('name')
-      ?? node.childForFieldName('internal_name');
+    nameNode = node.childForFieldName('name') ?? node.childForFieldName('internal_name');
     typeNode = node.childForFieldName('type');
   } else {
     nameNode = node.childForFieldName('name') ?? node.childForFieldName('pattern');
@@ -64,7 +81,11 @@ const extractParameter: ParameterExtractor = (node: SyntaxNode, env: Map<string,
 /** Swift: let user = User(name: "alice") — infer type from call when callee is a known class.
  *  Swift initializers are syntactically identical to function calls, so we verify
  *  against classNames (which may include cross-file SymbolTable lookups). */
-const extractInitializer: InitializerExtractor = (node: SyntaxNode, env: Map<string, string>, classNames: ClassNameLookup): void => {
+const extractInitializer: InitializerExtractor = (
+  node: SyntaxNode,
+  env: Map<string, string>,
+  classNames: ClassNameLookup,
+): void => {
   if (node.type !== 'property_declaration') return;
   // Skip if has type annotation — extractDeclaration handled it
   if (node.childForFieldName('type') || findChild(node, 'type_annotation')) return;
@@ -81,7 +102,10 @@ const extractInitializer: InitializerExtractor = (node: SyntaxNode, env: Map<str
       const child = node.namedChild(i);
       if (child && (child.type === 'await_expression' || child.type === 'try_expression')) {
         const unwrapped = unwrapSwiftExpression(child);
-        if (unwrapped.type === 'call_expression') { callExpr = unwrapped; break; }
+        if (unwrapped.type === 'call_expression') {
+          callExpr = unwrapped;
+          break;
+        }
       }
     }
   }
@@ -99,8 +123,10 @@ const extractInitializer: InitializerExtractor = (node: SyntaxNode, env: Map<str
   // Explicit init: User.init(name: "alice") — navigation_expression with .init suffix
   if (callee.type === 'navigation_expression') {
     const receiver = callee.firstNamedChild;
-    const suffix = callee.lastNamedChild;
-    if (receiver?.type === 'simple_identifier' && suffix?.text === 'init') {
+    if (
+      receiver?.type === 'simple_identifier' &&
+      swiftNavigationSuffixName(callee.lastNamedChild) === 'init'
+    ) {
       const calleeName = receiver.text;
       if (calleeName && classNames.has(calleeName)) {
         env.set(varName, calleeName);
@@ -113,18 +139,24 @@ const extractInitializer: InitializerExtractor = (node: SyntaxNode, env: Map<str
 const scanConstructorBinding: ConstructorBindingScanner = (node) => {
   if (node.type !== 'property_declaration') return undefined;
   if (hasTypeAnnotation(node)) return undefined;
-  const pattern = node.childForFieldName('pattern');
+  const pattern = node.childForFieldName('pattern') ?? findChild(node, 'pattern');
   if (!pattern) return undefined;
   const varName = pattern.text;
   if (!varName) return undefined;
   let callExpr: SyntaxNode | null = null;
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
-    if (child?.type === 'call_expression') { callExpr = child; break; }
+    if (child?.type === 'call_expression') {
+      callExpr = child;
+      break;
+    }
     // Unwrap await/try to find inner call_expression
     if (child && (child.type === 'await_expression' || child.type === 'try_expression')) {
       const unwrapped = unwrapSwiftExpression(child);
-      if (unwrapped.type === 'call_expression') { callExpr = unwrapped; break; }
+      if (unwrapped.type === 'call_expression') {
+        callExpr = unwrapped;
+        break;
+      }
     }
   }
   if (!callExpr) return undefined;
@@ -136,7 +168,7 @@ const scanConstructorBinding: ConstructorBindingScanner = (node) => {
   if (callee.type === 'navigation_expression') {
     const receiver = callee.firstNamedChild;
     const suffix = callee.lastNamedChild;
-    if (receiver?.type === 'simple_identifier' && suffix?.text === 'init') {
+    if (receiver?.type === 'simple_identifier' && swiftNavigationSuffixName(suffix) === 'init') {
       return { varName, calleeName: receiver.text };
     }
     // General qualified call: service.getUser() → extract method name.
@@ -161,7 +193,10 @@ const scanConstructorBinding: ConstructorBindingScanner = (node) => {
  * AST: if_statement/guard_statement contains value_binding_pattern, then simple_identifier (varName),
  * then call_expression/simple_identifier/navigation_expression (value).
  */
-function extractIfGuardBinding(node: SyntaxNode, scopeEnv: ReadonlyMap<string, string>): PendingAssignment | undefined {
+function extractIfGuardBinding(
+  node: SyntaxNode,
+  scopeEnv: ReadonlyMap<string, string>,
+): PendingAssignment | undefined {
   // Find value_binding_pattern to confirm this is an optional binding
   let hasValueBinding = false;
   let varName: string | undefined;
@@ -222,7 +257,12 @@ function extractIfGuardBinding(node: SyntaxNode, scopeEnv: ReadonlyMap<string, s
       if (receiver?.type === 'simple_identifier' && suffix?.type === 'navigation_suffix') {
         const method = suffix.lastNamedChild;
         if (method?.type === 'simple_identifier') {
-          return { kind: 'methodCallResult', lhs: varName, receiver: receiver.text, method: method.text };
+          return {
+            kind: 'methodCallResult',
+            lhs: varName,
+            receiver: receiver.text,
+            method: method.text,
+          };
         }
       }
     }
@@ -269,7 +309,12 @@ const extractPendingAssignment: PendingAssignmentExtractor = (node, scopeEnv) =>
   for (let i = node.namedChildCount - 1; i >= 0; i--) {
     const child = node.namedChild(i);
     if (!child) continue;
-    if (child.type === 'pattern' || child.type === 'value_binding_pattern' || child.type === 'type_annotation') continue;
+    if (
+      child.type === 'pattern' ||
+      child.type === 'value_binding_pattern' ||
+      child.type === 'type_annotation'
+    )
+      continue;
     valueNode = child;
     break;
   }
@@ -327,7 +372,10 @@ const extractPendingAssignment: PendingAssignmentExtractor = (node, scopeEnv) =>
  * AST: for_statement with pattern > simple_identifier (loop var) and
  * a simple_identifier/call_expression (collection).
  */
-const extractForLoopBinding: ForLoopExtractor = (node, { scopeEnv, declarationTypeNodes, scope, returnTypeLookup }): void => {
+const extractForLoopBinding: ForLoopExtractor = (
+  node,
+  { scopeEnv, declarationTypeNodes, scope, returnTypeLookup },
+): void => {
   if (node.type !== 'for_statement') return;
 
   // Find the loop variable from the pattern child
@@ -342,7 +390,8 @@ const extractForLoopBinding: ForLoopExtractor = (node, { scopeEnv, declarationTy
       if (!loopVarName) {
         // Extract a simple identifier from the pattern. Skip non-trivial patterns
         // (e.g. tuple destructuring `for (a, b) in ...`) to avoid polluting scopeEnv.
-        const varName = extractVarName(child) ?? (child.type === 'simple_identifier' ? child.text : undefined);
+        const varName =
+          extractVarName(child) ?? (child.type === 'simple_identifier' ? child.text : undefined);
         if (!varName) return; // Non-simple pattern — bail out
         loopVarName = varName;
         continue;
@@ -350,8 +399,11 @@ const extractForLoopBinding: ForLoopExtractor = (node, { scopeEnv, declarationTy
     }
     // After we found the loop var, the next expression-like node is the iterable
     if (loopVarName && !iterableNode) {
-      if (child.type === 'simple_identifier' || child.type === 'call_expression' ||
-          child.type === 'navigation_expression') {
+      if (
+        child.type === 'simple_identifier' ||
+        child.type === 'call_expression' ||
+        child.type === 'navigation_expression'
+      ) {
         iterableNode = child;
         break;
       }
@@ -405,7 +457,11 @@ const extractForLoopBinding: ForLoopExtractor = (node, { scopeEnv, declarationTy
   } else if (iterableName) {
     // Try to resolve element type from the iterable's declared type
     elementType = resolveIterableElementType(
-      iterableName, node, scopeEnv, declarationTypeNodes, scope,
+      iterableName,
+      node,
+      scopeEnv,
+      declarationTypeNodes,
+      scope,
       extractSwiftElementTypeFromTypeNode,
     );
   }
@@ -446,6 +502,17 @@ function extractSwiftElementTypeFromTypeNode(typeNode: SyntaxNode): string | und
 
 export const typeConfig: LanguageTypeConfig = {
   declarationNodeTypes: DECLARATION_NODE_TYPES,
+  getDeclarationTypeNode: (node) => {
+    // Swift: many declarations store type as a type_annotation child (not a 'type' field).
+    // Prefer a direct 'type' field if present, else unwrap type_annotation to its inner type.
+    const direct = node.childForFieldName('type');
+    if (direct) return direct;
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const c = node.namedChild(i);
+      if (c?.type === 'type_annotation') return c.firstNamedChild ?? c;
+    }
+    return null;
+  },
   forLoopNodeTypes: FOR_LOOP_NODE_TYPES,
   extractDeclaration,
   extractParameter,
