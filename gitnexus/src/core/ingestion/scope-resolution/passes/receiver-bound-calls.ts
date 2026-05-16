@@ -73,6 +73,7 @@ type ReceiverBoundProviderSubset = Pick<
   | 'hoistTypeBindingsToModule'
   | 'resolveQualifiedReceiverMember'
   | 'resolveThisViaEnclosingClass'
+  | 'constraintCompatibility'
 >;
 
 function normalizeTemplateArgToken(value: string): string {
@@ -640,7 +641,7 @@ export function emitReceiverBoundCalls(
           let memberDef: SymbolDefinition | undefined;
           let ambiguous = false;
           for (const ownerId of chain) {
-            const picked = pickOverload(ownerId, memberName, site, model);
+            const picked = pickOverload(ownerId, memberName, site, model, provider);
             if (picked === OVERLOAD_AMBIGUOUS) {
               ambiguous = true;
               break;
@@ -708,6 +709,7 @@ function pickOverload(
   memberName: string,
   site: ParsedFile['referenceSites'][number],
   model: SemanticModel,
+  provider: ReceiverBoundProviderSubset,
 ): SymbolDefinition | typeof OVERLOAD_AMBIGUOUS | undefined {
   const overloads = model.methods.lookupAllByOwner(ownerId, memberName);
   if (overloads.length === 0) {
@@ -718,7 +720,9 @@ function pickOverload(
   }
   if (overloads.length === 1) return overloads[0];
 
-  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes);
+  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
+    constraintCompatibility: provider.constraintCompatibility,
+  });
   // When narrowing leaves >1 candidate that share identical normalized
   // parameter-types (e.g., C++ `f(int)` vs `f(long)` both collapsed to
   // `['int']` by `normalizeCppParamType`), suppress the edge entirely.

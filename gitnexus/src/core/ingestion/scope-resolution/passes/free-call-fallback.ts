@@ -23,6 +23,7 @@ import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexe
 import type { SemanticModel } from '../../model/semantic-model.js';
 import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 import type { GraphNodeLookup } from '../graph-bridge/node-lookup.js';
+import type { ScopeResolver } from '../contract/scope-resolver.js';
 import { resolveCallerGraphId, resolveDefGraphId } from '../graph-bridge/ids.js';
 import {
   findCallableBindingInScope,
@@ -63,6 +64,12 @@ export function emitFreeCallFallback(
       scopes: ScopeResolutionIndexes,
       parsedFiles: readonly ParsedFile[],
     ) => readonly SymbolDefinition[] | undefined;
+    /** Optional per-language constraint hook threaded into
+     *  `narrowOverloadCandidates`. Drops candidates whose template
+     *  constraints (e.g. C++ `enable_if_t`, C++20 `requires`) provably
+     *  fail at the call site. Three-valued; `'unknown'` keeps the
+     *  candidate (monotonicity). */
+    readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
   } = {},
 ): number {
   let emitted = 0;
@@ -90,7 +97,9 @@ export function emitFreeCallFallback(
       // the same name in a single class, choose the best match by
       // arity + argument types.
       if (fnDef === undefined) {
-        fnDef = pickImplicitThisOverload(site, scopes, workspaceIndex, model);
+        fnDef = pickImplicitThisOverload(site, scopes, workspaceIndex, model, {
+          constraintCompatibility: options.constraintCompatibility,
+        });
       }
       if (fnDef === undefined) {
         if (options.resolveAdlCandidates === undefined) {
@@ -120,12 +129,43 @@ export function emitFreeCallFallback(
                 parsedFiles,
               );
 
-          // Preserve existing ordinary-lookup behavior when ADL contributed
-          // no candidates.
+          const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
           if (adl === undefined || adl.length === 0) {
-            fnDef = ordinary[0];
+            // No ADL contribution. Default behavior: `ordinary[0]` — the
+            // scope-chain walk in `findCallableBindingsAndAdlBlocker`
+            // processes local bindings before imported ones within each
+            // scope, so this preserves local-shadows-import semantics
+            // when multiple defs are visible at the same scope level.
+            //
+            // SFINAE / `requires`-clause guarded free function templates
+            // need narrowing instead: two `process<T>` overloads guarded
+            // by `enable_if_t<is_integral_v<T>>` vs
+            // `enable_if_t<is_floating_point_v<T>>` both visible at file
+            // scope must NOT collapse to "first wins" — the constraint
+            // filter has to disambiguate. Detect this by checking for
+            // any candidate carrying `templateConstraints`; outside that
+            // case keep the existing ordinary[0] path unchanged.
+            const hasConstraints = ordinary.some((d) => d.templateConstraints !== undefined);
+            if (ordinary.length <= 1 || !hasConstraints) {
+              fnDef = ordinary[0];
+            } else {
+              const narrowed = narrowOverloadCandidates(ordinary, site.arity, site.argumentTypes, {
+                constraintCompatibility: options.constraintCompatibility,
+              });
+              if (narrowed.length === 1) {
+                fnDef = narrowed[0];
+              } else if (narrowed.length === 0) {
+                handledSites.add(siteKey);
+                continue;
+              } else {
+                // >1 survivors: suppress (same semantics as merged-narrow
+                // branch below). The OVERLOAD_AMBIGUOUS sentinel preserves
+                // "degrade not lie" — no edge is preferable to a wrong one.
+                handledSites.add(siteKey);
+                continue;
+              }
+            }
           } else {
-            const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
             const merged: SymbolDefinition[] = [];
             const seen = new Set<string>();
             const push = (defs: readonly SymbolDefinition[]): void => {
@@ -138,7 +178,9 @@ export function emitFreeCallFallback(
             push(ordinary);
             push(adl);
 
-            const narrowed = narrowOverloadCandidates(merged, site.arity, site.argumentTypes);
+            const narrowed = narrowOverloadCandidates(merged, site.arity, site.argumentTypes, {
+              constraintCompatibility: options.constraintCompatibility,
+            });
             if (narrowed.length === 1) {
               fnDef = narrowed[0];
             } else if (narrowed.length === 0) {
@@ -362,6 +404,7 @@ export function pickImplicitThisOverload(
   scopes: ScopeResolutionIndexes,
   workspaceIndex: WorkspaceResolutionIndex,
   model: SemanticModel,
+  hookCtx?: { readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'] },
 ): SymbolDefinition | undefined {
   // Find the enclosing Class scope by walking parents.
   let curId: ScopeId | null = site.inScope;
@@ -389,7 +432,9 @@ export function pickImplicitThisOverload(
   // ambiguous narrowing (multiple compatible candidates with no
   // disambiguating signal) leaves the call unresolved rather than
   // routing to an arbitrary first overload by registration order.
-  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes);
+  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
+    constraintCompatibility: hookCtx?.constraintCompatibility,
+  });
   if (candidates.length !== 1) return undefined;
   return candidates[0];
 }

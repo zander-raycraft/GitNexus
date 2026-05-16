@@ -382,6 +382,7 @@ export function runScopeResolution(
       isFileLocalDef: provider.isFileLocalDef,
       isCallableVisibleFromCaller: provider.isCallableVisibleFromCaller,
       resolveAdlCandidates: provider.resolveAdlCandidates,
+      constraintCompatibility: provider.constraintCompatibility,
     },
   );
   const { emitted, skipped } = emitReferencesViaLookup(
