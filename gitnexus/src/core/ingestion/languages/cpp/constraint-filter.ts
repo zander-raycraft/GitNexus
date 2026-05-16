@@ -35,12 +35,22 @@ type AtomicEvaluator = (argClasses: readonly TypeClass[]) => ArityVerdict;
  * `normalizeCppParamType` (today the normalizer strips those markers
  * before storage) live in #1579 as one-line follow-up adds.
  */
+// ISO `<type_traits>` treats `bool`, `char`, and the signed/unsigned char
+// variants as integral types (§21.3.4 Table 48), so `is_integral_v<bool>`
+// and `is_integral_v<char>` must both yield `true`. We keep the `TypeClass`
+// enum precise (separate `'bool'` / `'char'` buckets) so that
+// `is_same_v<bool, int>` still resolves to `'incompatible'`; the integral-
+// family widening lives here in the predicate evaluators instead.
+function isIntegralClass(c: TypeClass | undefined): boolean {
+  return c === 'integral' || c === 'bool' || c === 'char';
+}
+
 const REGISTRY = new Map<string, AtomicEvaluator>([
-  ['is_integral_v', (cls) => verdictFromBool(cls[0] === 'integral', cls)],
+  ['is_integral_v', (cls) => verdictFromBool(isIntegralClass(cls[0]), cls)],
   ['is_floating_point_v', (cls) => verdictFromBool(cls[0] === 'floating', cls)],
   [
     'is_arithmetic_v',
-    (cls) => verdictFromBool(cls[0] === 'integral' || cls[0] === 'floating', cls),
+    (cls) => verdictFromBool(isIntegralClass(cls[0]) || cls[0] === 'floating', cls),
   ],
   // NOTE: cv-qualifiers are stripped by `normalizeCppParamType` before the
   // type token reaches `classifyType`, so `is_same_v<const T, T>` returns

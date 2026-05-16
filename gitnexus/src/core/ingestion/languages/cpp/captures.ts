@@ -720,6 +720,15 @@ function inferCppLiteralType(node: SyntaxNode): string {
  *   - `int n = ...` → 'int'
  *   - `const int n = ...` → 'int'
  * Returns empty string if no declaration found or type is auto/placeholder.
+ *
+ * Limitation: only `declaration` siblings inside the enclosing
+ * `compound_statement` are inspected. Function parameters live in the
+ * `function_declarator`'s `parameter_list` and are NOT resolved here, so
+ *   `void run(int n) { process(n); }`
+ * infers `''` for `n` and the constraint filter falls through to
+ * `'unknown'` → ambiguity suppression → 0 CALLS edges. This is a
+ * "degrade not lie" gap (no wrong edges, just missing ones); extending
+ * the scan to `parameter_list` is tracked under #1579 as a follow-up.
  */
 function lookupDeclaredTypeForIdentifier(identNode: SyntaxNode): string {
   const varName = identNode.text;

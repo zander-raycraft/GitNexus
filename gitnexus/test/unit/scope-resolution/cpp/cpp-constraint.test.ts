@@ -34,9 +34,14 @@ function templateConstraintsFor(src: string): CppConstraintPayload | undefined {
 
 describe('extractCppTemplateConstraints — AST shapes', () => {
   it('F1 — unqualified enable_if_t<P, int> = 0 default parameter', () => {
+    // Genuinely unqualified form — no `std::` prefix on `enable_if_t`,
+    // which exercises the `template_type`-direct branch in the extractor
+    // independently of the `qualified_identifier` unwrap covered by F2.
     const payload = templateConstraintsFor(`
       #include <type_traits>
-      template<class T, std::enable_if_t<is_integral_v<T>, int> = 0>
+      using std::enable_if_t;
+      using std::is_integral_v;
+      template<class T, enable_if_t<is_integral_v<T>, int> = 0>
       void process(T value);
     `);
     expect(payload).toBeDefined();
@@ -221,6 +226,12 @@ describe('Tier-A predicate registry', () => {
     expect(verdict('is_integral_v', ['T'], [''])).toBe('unknown');
   });
 
+  it('is_integral_v accepts bool and char per ISO `<type_traits>`', () => {
+    // ISO §21.3.4 Table 48: bool and char are integral types.
+    expect(verdict('is_integral_v', ['T'], ['bool'])).toBe('compatible');
+    expect(verdict('is_integral_v', ['T'], ['char'])).toBe('compatible');
+  });
+
   it('is_floating_point_v matches double, rejects int, unknown for blank', () => {
     expect(verdict('is_floating_point_v', ['T'], ['double'])).toBe('compatible');
     expect(verdict('is_floating_point_v', ['T'], ['int'])).toBe('incompatible');
@@ -230,6 +241,8 @@ describe('Tier-A predicate registry', () => {
   it('is_arithmetic_v matches both int and double (integral ∨ floating)', () => {
     expect(verdict('is_arithmetic_v', ['T'], ['int'])).toBe('compatible');
     expect(verdict('is_arithmetic_v', ['T'], ['double'])).toBe('compatible');
+    expect(verdict('is_arithmetic_v', ['T'], ['bool'])).toBe('compatible');
+    expect(verdict('is_arithmetic_v', ['T'], ['char'])).toBe('compatible');
     expect(verdict('is_arithmetic_v', ['T'], ['MyClass'])).toBe('incompatible');
   });
 
@@ -237,6 +250,11 @@ describe('Tier-A predicate registry', () => {
     expect(verdict('is_same_v', ['A', 'B'], ['int', 'int'])).toBe('compatible');
     expect(verdict('is_same_v', ['A', 'B'], ['int', 'double'])).toBe('incompatible');
     expect(verdict('is_same_v', ['A', 'B'], ['int', ''])).toBe('unknown');
+    // Regression guard: even though `is_integral_v` now treats `bool` and
+    // `char` as integral, `is_same_v` must keep them distinct from `int`
+    // (precise `TypeClass` enum — widening lives only in the registry).
+    expect(verdict('is_same_v', ['A', 'B'], ['bool', 'int'])).toBe('incompatible');
+    expect(verdict('is_same_v', ['A', 'B'], ['char', 'int'])).toBe('incompatible');
   });
 
   it('unregistered predicate yields unknown (monotonicity)', () => {
