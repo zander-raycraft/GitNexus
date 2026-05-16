@@ -24,20 +24,51 @@
  *      equality. An empty string in `argTypes[i]` means "unknown" and
  *      counts as a match. Mismatches disqualify. A non-empty typed
  *      result wins; otherwise return the arity-filtered candidates.
+ *   4b. When the exact-type filter from step 4 returns empty AND a
+ *       `conversionRankFn` is provided (via `hookCtx`), rank candidates
+ *       via pairwise dominance comparison (ISO C++ [over.ics.rank]):
+ *       F1 beats F2 only when F1 is not worse for every arg and better
+ *       for at least one. Non-dominated candidates are returned;
+ *       multiple survivors are genuinely ambiguous.
+ *   4c. Final per-candidate constraint filter (SFINAE / `requires`).
+ *       When `constraintCompatibility` is provided via `hookCtx`, drop
+ *       candidates whose template constraints provably fail at the
+ *       call site. Three-valued; `'unknown'` keeps the candidate
+ *       (monotonicity).
  *   5. Empty input returns empty output.
  */
 
 import type { ArityVerdict, Callsite, ConstraintContext, SymbolDefinition } from 'gitnexus-shared';
 
 /**
- * Optional hook bundle for the constraint-filter step. Threaded in from
- * `pickOverload` / `pickImplicitThisOverload` so per-language overload
- * narrowing can drop candidates whose template constraints (SFINAE
- * `enable_if_t`, C++20 `requires`, future Rust trait bounds, etc.) fail
- * at the call site. When `constraintCompatibility` is undefined or
- * `argCount` is unknown the filter is a pass-through.
+ * Per-slot conversion-rank function. Returns a numeric cost for
+ * converting `argType` to `paramType`:
+ *   - 0 = exact match (no conversion)
+ *   - 1 = promotion (e.g. char→int, bool→int in C++)
+ *   - 2 = standard conversion (e.g. int→double)
+ *   - Infinity = incompatible types
+ *
+ * Each language provides its own implementation. The function operates
+ * on normalized type strings (output of the language's type normalizer).
+ */
+export type ConversionRankFn = (argType: string, paramType: string) => number;
+
+/**
+ * Optional hook bundle for narrowing extension points. Threaded in
+ * from `pickOverload` / `pickImplicitThisOverload` so per-language
+ * narrowing can layer in conversion-rank scoring (#1606) and
+ * constraint filtering (#1579) without changing the call signature
+ * at every site. Each hook is independently optional — leaving both
+ * undefined preserves the legacy arity + exact-type behavior.
  */
 export interface OverloadNarrowingHookCtx {
+  /** Conversion-rank scoring fallback (step 4b). Engages when the
+   *  exact-type filter rejects every candidate. */
+  readonly conversionRankFn?: ConversionRankFn;
+  /** Constraint filter (step 4c). Drops candidates whose template
+   *  guards (SFINAE `enable_if_t`, C++20 `requires`, future Rust
+   *  trait bounds, etc.) provably fail at the call site. Three-valued
+   *  — `'unknown'` keeps the candidate (monotonicity). */
   readonly constraintCompatibility?: (
     callsite: Callsite,
     def: SymbolDefinition,
@@ -101,14 +132,27 @@ export function narrowOverloadCandidates(
       }
       return true;
     });
-    if (typed.length > 0) result = typed;
+    if (typed.length > 0) {
+      result = typed;
+    } else if (hookCtx?.conversionRankFn !== undefined) {
+      // ── Conversion-rank scoring (step 4b) ──────────────────────────
+      // The exact-type filter rejected every candidate. Rank via
+      // pairwise dominance: F1 beats F2 only when F1 is not worse for
+      // every arg and better for at least one. Non-dominated candidates
+      // are returned; multiple survivors are genuinely ambiguous. When
+      // ranking also yields empty, fall through to the arity-filtered
+      // `candidates` set — matches pre-#1606 behavior.
+      const ranked = rankByConversion(candidates, argTypes, hookCtx.conversionRankFn);
+      if (ranked.length > 0) result = ranked;
+    }
   }
 
-  // Constraint filter (Tier-A; SFINAE / `requires` clauses). Runs after
-  // arity + type filters so the hook only sees candidates already viable
-  // on the other axes. Three-valued: `'compatible'` and `'unknown'` keep
-  // the candidate (monotonicity — adding a predicate must never cause a
-  // wrong edge); only `'incompatible'` drops it. Candidates without
+  // Constraint filter (step 4c; Tier-A — SFINAE / `requires` clauses).
+  // Runs after arity, exact-type, and conversion-rank filters so the
+  // hook only sees candidates already viable on the other axes.
+  // Three-valued: `'compatible'` and `'unknown'` keep the candidate
+  // (monotonicity — adding a predicate must never cause a wrong edge);
+  // only `'incompatible'` drops it. Candidates without
   // `templateConstraints` are always kept.
   //
   // No fallback to the unconstrained set when this filter empties the
@@ -127,6 +171,82 @@ export function narrowOverloadCandidates(
   }
 
   return result;
+}
+
+/**
+ * Pairwise dominance comparison (ISO C++ [over.ics.rank]).
+ *
+ * F1 is a better match than F2 when F1's conversion rank is **not
+ * worse** for every argument AND **strictly better** for at least one.
+ * Candidates dominated by any other viable candidate are removed.
+ * If more than one non-dominated candidate remains, they are genuinely
+ * ambiguous — callers suppress the edge rather than picking arbitrarily.
+ *
+ * Candidates with at least one `Infinity`-ranked slot (incompatible
+ * type) are excluded before pairwise comparison begins.
+ */
+function rankByConversion(
+  candidates: readonly SymbolDefinition[],
+  argTypes: readonly string[],
+  rankFn: ConversionRankFn,
+): readonly SymbolDefinition[] {
+  // Step 1: compute per-slot ranks and exclude non-viable candidates.
+  const viable: Array<{ def: SymbolDefinition; ranks: number[] }> = [];
+  for (const d of candidates) {
+    const params = d.parameterTypes;
+    if (params === undefined) continue;
+    const ranks: number[] = [];
+    let ok = true;
+    for (let i = 0; i < argTypes.length && i < params.length; i++) {
+      if (argTypes[i] === '') {
+        ranks.push(0); // unknown arg → any-match (rank 0)
+        continue;
+      }
+      const r = rankFn(argTypes[i], params[i]);
+      if (!isFinite(r)) {
+        ok = false;
+        break;
+      }
+      ranks.push(r);
+    }
+    if (!ok) continue;
+    viable.push({ def: d, ranks });
+  }
+  if (viable.length <= 1) return viable.map((v) => v.def);
+
+  // Step 2: pairwise dominance — remove candidates dominated by any other.
+  const dominated = new Set<number>();
+  for (let i = 0; i < viable.length; i++) {
+    if (dominated.has(i)) continue;
+    for (let j = i + 1; j < viable.length; j++) {
+      if (dominated.has(j)) continue;
+      const cmp = pairwiseCompare(viable[i].ranks, viable[j].ranks);
+      if (cmp < 0)
+        dominated.add(j); // i dominates j
+      else if (cmp > 0) dominated.add(i); // j dominates i
+    }
+  }
+  return viable.filter((_, idx) => !dominated.has(idx)).map((v) => v.def);
+}
+
+/**
+ * Compare two per-slot rank vectors.
+ * Returns  -1 if `a` dominates `b` (not worse everywhere, better somewhere),
+ *          +1 if `b` dominates `a`,
+ *           0 if neither dominates (incomparable or equal).
+ */
+function pairwiseCompare(a: readonly number[], b: readonly number[]): -1 | 0 | 1 {
+  let aBetter = false;
+  let bBetter = false;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i] < b[i]) aBetter = true;
+    else if (b[i] < a[i]) bBetter = true;
+    if (aBetter && bBetter) return 0; // incomparable — early exit
+  }
+  if (aBetter && !bBetter) return -1;
+  if (bBetter && !aBetter) return 1;
+  return 0;
 }
 
 /**
