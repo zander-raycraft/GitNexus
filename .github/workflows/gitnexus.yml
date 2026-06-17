@@ -1,0 +1,20 @@
+# managed by gitnexus-cli
+name: GitNexus
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Akon-Labs/gitnexus-check@staging
+        with:
+          hub-url: https://gitnexus-enterprise-staging.up.railway.app
+          token: ${{ secrets.GITNEXUS_TOKEN }}
+          fail-on-blast-level: CRITICAL
