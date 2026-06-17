@@ -1,6 +1,6 @@
 /**
  * MCP Resources (Multi-Repo)
- *
+ * 
  * Provides structured on-demand data to AI agents.
  * All resources use repo-scoped URIs: gitnexus://repo/{name}/context
  */
@@ -30,8 +30,7 @@ export function getResourceDefinitions(): ResourceDefinition[] {
     {
       uri: 'gitnexus://repos',
       name: 'All Indexed Repositories',
-      description:
-        'List of all indexed repos with stats. Read this first to discover available repos.',
+      description: 'List of all indexed repos with stats. Read this first to discover available repos.',
       mimeType: 'text/yaml',
     },
     {
@@ -84,140 +83,30 @@ export function getResourceTemplates(): ResourceTemplate[] {
       description: 'Step-by-step execution trace',
       mimeType: 'text/yaml',
     },
-    {
-      uriTemplate: 'gitnexus://group/{name}/contracts',
-      name: 'Group Contract Registry',
-      description:
-        'Cross-repo contract registry for a repository group. Optional query: type, repo, unmatchedOnly (true|false).',
-      mimeType: 'text/yaml',
-    },
-    {
-      uriTemplate: 'gitnexus://group/{name}/status',
-      name: 'Group Index Status',
-      description: 'Per-repo index and contract-registry staleness for a repository group',
-      mimeType: 'text/yaml',
-    },
   ];
 }
 
-/** Query parameters for `gitnexus://group/{name}/contracts` */
-export type GroupContractsResourceFilter = {
-  type?: string;
-  repo?: string;
-  unmatchedOnly?: boolean;
-};
-
-/** Normalized parse result for GitNexus MCP resource URIs */
-export type ParsedGitnexusResource =
-  | { kind: 'repos' }
-  | { kind: 'setup' }
-  | {
-      kind: 'repo';
-      repoName: string;
-      resourceType: string;
-      param?: string;
-    }
-  | {
-      kind: 'group';
-      groupName: string;
-      resourceType: 'contracts';
-      contractsFilter: GroupContractsResourceFilter;
-    }
-  | { kind: 'group'; groupName: string; resourceType: 'status' };
-
-function parseUnmatchedOnlyParam(raw: string | null): boolean | undefined {
-  if (raw === null) return undefined;
-  const v = raw.trim().toLowerCase();
-  if (v === 'true' || v === '1') return true;
-  if (v === 'false' || v === '0') return false;
-  return undefined;
-}
-
 /**
- * Parse a GitNexus resource URI (repos, setup, per-repo, or per-group templates).
- * Used by `readResource` and tests (round-trip / dispatch coverage).
+ * Parse a resource URI to extract the repo name and resource type.
  */
-export function parseResourceUri(uri: string): ParsedGitnexusResource {
-  if (uri === 'gitnexus://repos') return { kind: 'repos' };
-  if (uri === 'gitnexus://setup') return { kind: 'setup' };
+function parseUri(uri: string): { repoName?: string; resourceType: string; param?: string } {
+  if (uri === 'gitnexus://repos') return { resourceType: 'repos' };
+  if (uri === 'gitnexus://setup') return { resourceType: 'setup' };
 
-  let u: URL;
-  try {
-    u = new URL(uri);
-  } catch {
-    throw new Error(`Unknown resource URI: ${uri}`);
-  }
-
-  if (u.protocol !== 'gitnexus:') {
-    throw new Error(`Unknown resource URI: ${uri}`);
-  }
-
-  if (u.hostname === 'group') {
-    const segments = u.pathname
-      .replace(/^\/+|\/+$/g, '')
-      .split('/')
-      .filter(Boolean);
-    if (segments.length < 2) {
-      throw new Error(
-        `Invalid group resource URI (expected gitnexus://group/{name}/contracts or .../status): ${uri}`,
-      );
-    }
-    const tail = segments[segments.length - 1]!;
-    if (tail !== 'contracts' && tail !== 'status') {
-      throw new Error(`Unknown group resource path in URI: ${uri}`);
-    }
-    const groupName = segments
-      .slice(0, -1)
-      .map((s) => decodeURIComponent(s))
-      .join('/');
-    if (!groupName) {
-      throw new Error(`Invalid group resource URI (empty group name): ${uri}`);
-    }
-    if (tail === 'status') {
-      return { kind: 'group', groupName, resourceType: 'status' };
-    }
-    const contractsFilter: GroupContractsResourceFilter = {};
-    const type = u.searchParams.get('type');
-    if (type && type.trim()) contractsFilter.type = type.trim();
-    const repo = u.searchParams.get('repo');
-    if (repo && repo.trim()) contractsFilter.repo = repo.trim();
-    if (u.searchParams.has('unmatchedOnly')) {
-      const coerced = parseUnmatchedOnlyParam(u.searchParams.get('unmatchedOnly'));
-      if (coerced !== undefined) contractsFilter.unmatchedOnly = coerced;
-    }
-    return { kind: 'group', groupName, resourceType: 'contracts', contractsFilter };
-  }
-
-  if (u.hostname === 'repo') {
-    const segments = u.pathname
-      .replace(/^\/+|\/+$/g, '')
-      .split('/')
-      .filter(Boolean);
-    if (segments.length < 2) {
-      throw new Error(`Unknown resource URI: ${uri}`);
-    }
-    const repoName = decodeURIComponent(segments[0]!);
-    const restEncoded = segments.slice(1);
-    const rest = restEncoded.map((s) => decodeURIComponent(s)).join('/');
+  // Repo-scoped: gitnexus://repo/{name}/context
+  const repoMatch = uri.match(/^gitnexus:\/\/repo\/([^/]+)\/(.+)$/);
+  if (repoMatch) {
+    const repoName = decodeURIComponent(repoMatch[1]);
+    const rest = repoMatch[2];
 
     if (rest.startsWith('cluster/')) {
-      return {
-        kind: 'repo',
-        repoName,
-        resourceType: 'cluster',
-        param: rest.replace(/^cluster\//, ''),
-      };
+      return { repoName, resourceType: 'cluster', param: decodeURIComponent(rest.replace('cluster/', '')) };
     }
     if (rest.startsWith('process/')) {
-      return {
-        kind: 'repo',
-        repoName,
-        resourceType: 'process',
-        param: rest.replace(/^process\//, ''),
-      };
+      return { repoName, resourceType: 'process', param: decodeURIComponent(rest.replace('process/', '')) };
     }
 
-    return { kind: 'repo', repoName, resourceType: rest };
+    return { repoName, resourceType: rest };
   }
 
   throw new Error(`Unknown resource URI: ${uri}`);
@@ -227,21 +116,16 @@ export function parseResourceUri(uri: string): ParsedGitnexusResource {
  * Read a resource and return its content
  */
 export async function readResource(uri: string, backend: LocalBackend): Promise<string> {
-  const parsed = parseResourceUri(uri);
+  const parsed = parseUri(uri);
 
-  if (parsed.kind === 'repos') {
+  // Global repos list — no repo context needed
+  if (parsed.resourceType === 'repos') {
     return getReposResource(backend);
   }
-
-  if (parsed.kind === 'setup') {
+  
+  // Setup resource — returns AGENTS.md content for all repos
+  if (parsed.resourceType === 'setup') {
     return getSetupResource(backend);
-  }
-
-  if (parsed.kind === 'group') {
-    if (parsed.resourceType === 'contracts') {
-      return backend.readGroupContractsResource(parsed.groupName, parsed.contractsFilter);
-    }
-    return backend.readGroupStatusResource(parsed.groupName);
   }
 
   const repoName = parsed.repoName;
@@ -310,21 +194,21 @@ async function getContextResource(backend: LocalBackend, repoName?: string): Pro
   if (!context) {
     return 'error: No codebase loaded. Run: gitnexus analyze';
   }
-
+  
   // Check staleness
   const repoPath = repo.repoPath;
   const lastCommit = repo.lastCommit || 'HEAD';
-  const staleness = repoPath
-    ? checkStaleness(repoPath, lastCommit)
-    : { isStale: false, commitsBehind: 0 };
-
-  const lines: string[] = [`project: ${context.projectName}`];
-
+  const staleness = repoPath ? checkStaleness(repoPath, lastCommit) : { isStale: false, commitsBehind: 0 };
+  
+  const lines: string[] = [
+    `project: ${context.projectName}`,
+  ];
+  
   if (staleness.isStale && staleness.hint) {
     lines.push('');
     lines.push(`staleness: "${staleness.hint}"`);
   }
-
+  
   lines.push('');
   lines.push('stats:');
   lines.push(`  files: ${context.stats.fileCount}`);
@@ -348,11 +232,7 @@ async function getContextResource(backend: LocalBackend, repoName?: string): Pro
   lines.push(`  - gitnexus://repo/${context.projectName}/processes: All execution flows`);
   lines.push(`  - gitnexus://repo/${context.projectName}/cluster/{name}: Module details`);
   lines.push(`  - gitnexus://repo/${context.projectName}/process/{name}: Process trace`);
-  lines.push(
-    '  - gitnexus://group/{name}/contracts: Group contract registry (optional ?type=&repo=&unmatchedOnly=)',
-  );
-  lines.push('  - gitnexus://group/{name}/status: Group index / contract staleness');
-
+  
   return lines.join('\n');
 }
 
@@ -381,9 +261,7 @@ async function getClustersResource(backend: LocalBackend, repoName?: string): Pr
     }
 
     if (result.clusters.length > displayLimit) {
-      lines.push(
-        `\n# Showing top ${displayLimit} of ${result.clusters.length} modules. Use gitnexus_query for deeper search.`,
-      );
+      lines.push(`\n# Showing top ${displayLimit} of ${result.clusters.length} modules. Use gitnexus_query for deeper search.`);
     }
 
     return lines.join('\n');
@@ -415,9 +293,7 @@ async function getProcessesResource(backend: LocalBackend, repoName?: string): P
     }
 
     if (result.processes.length > displayLimit) {
-      lines.push(
-        `\n# Showing top ${displayLimit} of ${result.processes.length} processes. Use gitnexus_query for deeper search.`,
-      );
+      lines.push(`\n# Showing top ${displayLimit} of ${result.processes.length} processes. Use gitnexus_query for deeper search.`);
     }
 
     return lines.join('\n');
@@ -447,10 +323,10 @@ additional_node_types: "Multi-language: Struct, Enum, Macro, Typedef, Union, Nam
 
 node_properties:
   common: "name (STRING), filePath (STRING), startLine (INT32), endLine (INT32)"
-  Method: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL), visibility (STRING), isStatic (BOOL), isAbstract (BOOL), isFinal (BOOL), isVirtual (BOOL), isOverride (BOOL), isAsync (BOOL), isPartial (BOOL), requiredParameterCount (INT32), parameterTypes (STRING[]), annotations (STRING[])"
-  Function: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL), visibility (STRING), isStatic (BOOL), isAbstract (BOOL), isFinal (BOOL), isAsync (BOOL), parameterTypes (STRING[]), annotations (STRING[])"
+  Method: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL)"
+  Function: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL)"
   Property: "declaredType (STRING) — the field's type annotation (e.g., 'Address', 'City'). Used for field-access chain resolution."
-  Constructor: "parameterCount (INT32), visibility (STRING), isStatic (BOOL), parameterTypes (STRING[])"
+  Constructor: "parameterCount (INT32)"
   Community: "heuristicLabel (STRING), cohesion (DOUBLE), symbolCount (INT32), keywords (STRING[]), description (STRING), enrichedBy (STRING)"
   Process: "heuristicLabel (STRING), processType (STRING — 'intra_community' or 'cross_community'), stepCount (INT32), communities (STRING[]), entryPointId (STRING), terminalId (STRING)"
 
@@ -464,8 +340,7 @@ relationships:
   - HAS_METHOD: Class/Struct/Interface owns a Method
   - HAS_PROPERTY: Class/Struct/Interface owns a Property (field)
   - ACCESSES: Function/Method reads or writes a Property (reason: 'read' or 'write')
-  - METHOD_OVERRIDES: Method overrides another Method (MRO)
-  - METHOD_IMPLEMENTS: ConcreteMethod implements InterfaceMethod (matched by name + parameterTypes)
+  - OVERRIDES: Method overrides another Method (MRO)
   - MEMBER_OF: Symbol belongs to community
   - STEP_IN_PROCESS: Symbol is step N in process
 
@@ -492,11 +367,7 @@ example_queries:
 /**
  * Cluster detail resource — queries graph directly via backend.queryClusterDetail()
  */
-async function getClusterDetailResource(
-  name: string,
-  backend: LocalBackend,
-  repoName?: string,
-): Promise<string> {
+async function getClusterDetailResource(name: string, backend: LocalBackend, repoName?: string): Promise<string> {
   try {
     const result = await backend.queryClusterDetail(name, repoName);
 
@@ -538,11 +409,7 @@ async function getClusterDetailResource(
 /**
  * Process detail resource — queries graph directly via backend.queryProcessDetail()
  */
-async function getProcessDetailResource(
-  name: string,
-  backend: LocalBackend,
-  repoName?: string,
-): Promise<string> {
+async function getProcessDetailResource(name: string, backend: LocalBackend, repoName?: string): Promise<string> {
   try {
     const result = await backend.queryProcessDetail(name, repoName);
 
@@ -583,9 +450,9 @@ async function getSetupResource(backend: LocalBackend): Promise<string> {
   if (repos.length === 0) {
     return '# GitNexus\n\nNo repositories indexed. Run: `npx gitnexus analyze` in a repository.';
   }
-
+  
   const sections: string[] = [];
-
+  
   for (const repo of repos) {
     const stats = repo.stats || {};
     const lines = [
@@ -614,6 +481,6 @@ async function getSetupResource(backend: LocalBackend): Promise<string> {
     ];
     sections.push(lines.join('\n'));
   }
-
+  
   return sections.join('\n\n---\n\n');
 }

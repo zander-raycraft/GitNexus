@@ -8,8 +8,7 @@
 
 import path from 'node:path';
 import { generateId } from '../../lib/utils.js';
-import type { GraphNode } from 'gitnexus-shared';
-import { KnowledgeGraph } from '../graph/types.js';
+import { KnowledgeGraph, GraphNode, GraphRelationship } from '../graph/types.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+)$/;
 const LINK_RE = /\[([^\]]*)\]\(([^)]+)\)/g;
@@ -23,7 +22,7 @@ interface MdFile {
 export const processMarkdown = (
   graph: KnowledgeGraph,
   files: MdFile[],
-  allPathSet: ReadonlySet<string>,
+  allPathSet: Set<string>,
 ): { sections: number; links: number } => {
   let totalSections = 0;
   let totalLinks = 0;
@@ -90,8 +89,9 @@ export const processMarkdown = (
         sectionStack.pop();
       }
 
-      const parentId =
-        sectionStack.length > 0 ? sectionStack[sectionStack.length - 1].id : fileNodeId;
+      const parentId = sectionStack.length > 0
+        ? sectionStack[sectionStack.length - 1].id
+        : fileNodeId;
 
       graph.addRelationship({
         id: generateId('CONTAINS', `${parentId}->${sectionId}`),
@@ -115,12 +115,8 @@ export const processMarkdown = (
       const href = linkMatch[2];
 
       // Skip external URLs, anchors, and mailto
-      if (
-        href.startsWith('http://') ||
-        href.startsWith('https://') ||
-        href.startsWith('#') ||
-        href.startsWith('mailto:')
-      ) {
+      if (href.startsWith('http://') || href.startsWith('https://') ||
+          href.startsWith('#') || href.startsWith('mailto:')) {
         continue;
       }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NODE_TABLES, REL_TYPES } from 'gitnexus-shared';
+import { NODE_TABLES, REL_TYPES } from '../../src/core/lbug/schema';
 
 // ---------------------------------------------------------------------------
 // Recreate the security guards locally so we can test the exact logic used in
@@ -11,11 +11,14 @@ import { NODE_TABLES, REL_TYPES } from 'gitnexus-shared';
 //   readOnly guard (regex)     -- gitnexus-web/src/core/lbug/lbug-adapter.ts
 // ---------------------------------------------------------------------------
 
-const validLabel = (label: string): boolean => (NODE_TABLES as readonly string[]).includes(label);
+const validLabel = (label: string): boolean =>
+  (NODE_TABLES as readonly string[]).includes(label);
 
-const validRelType = (t: string): boolean => (REL_TYPES as readonly string[]).includes(t);
+const validRelType = (t: string): boolean =>
+  (REL_TYPES as readonly string[]).includes(t);
 
-const isSafeId = (id: string): boolean => /^[a-zA-Z0-9_:.\-/@]+$/.test(id);
+const isSafeId = (id: string): boolean =>
+  /^[a-zA-Z0-9_:.\-/@]+$/.test(id);
 
 const isWriteQuery = (cypher: string): boolean => {
   const stripped = cypher.replace(/'[^']*'|"[^"]*"/g, '').toUpperCase();
@@ -26,32 +29,17 @@ const isWriteQuery = (cypher: string): boolean => {
 // validLabel
 // ===========================================================================
 describe('validLabel – NODE_TABLES membership', () => {
-  it.each(['Function', 'Class', 'File', 'Process', 'Community'])(
-    'accepts known label "%s"',
-    (label) => {
-      expect(validLabel(label)).toBe(true);
-    },
-  );
+  it.each([
+    'Function', 'Class', 'File', 'Process', 'Community',
+  ])('accepts known label "%s"', (label) => {
+    expect(validLabel(label)).toBe(true);
+  });
 
   it.each([
-    'Struct',
-    'Enum',
-    'Trait',
-    'Impl',
-    'Macro',
-    'Typedef',
-    'Union',
-    'Namespace',
-    'TypeAlias',
-    'Const',
-    'Static',
-    'Property',
-    'Record',
-    'Delegate',
-    'Annotation',
-    'Constructor',
-    'Template',
-    'Module',
+    'Struct', 'Enum', 'Trait', 'Impl', 'Macro', 'Typedef',
+    'Union', 'Namespace', 'TypeAlias', 'Const', 'Static',
+    'Property', 'Record', 'Delegate', 'Annotation',
+    'Constructor', 'Template', 'Module',
   ])('accepts multi-language label "%s"', (label) => {
     expect(validLabel(label)).toBe(true);
   });
@@ -71,17 +59,7 @@ describe('validLabel – NODE_TABLES membership', () => {
   });
 
   it('NODE_TABLES contains all expected core labels', () => {
-    const core = [
-      'File',
-      'Folder',
-      'Function',
-      'Class',
-      'Interface',
-      'Method',
-      'CodeElement',
-      'Community',
-      'Process',
-    ];
+    const core = ['File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'CodeElement', 'Community', 'Process'];
     for (const label of core) {
       expect((NODE_TABLES as readonly string[]).includes(label)).toBe(true);
     }
@@ -92,7 +70,9 @@ describe('validLabel – NODE_TABLES membership', () => {
 // validRelType
 // ===========================================================================
 describe('validRelType – REL_TYPES membership', () => {
-  it.each([...REL_TYPES])('accepts known relation type "%s"', (relType) => {
+  it.each(
+    [...REL_TYPES]
+  )('accepts known relation type "%s"', (relType) => {
     expect(validRelType(relType)).toBe(true);
   });
 
@@ -132,12 +112,11 @@ describe('isSafeId – identifier allowlist regex', () => {
     expect(isSafeId(id)).toBe(true);
   });
 
-  it.each([['with spaces', 'Process:my process']])(
-    'rejects ID with unsafe chars: %s',
-    (_desc, id) => {
-      expect(isSafeId(id)).toBe(false);
-    },
-  );
+  it.each([
+    ['with spaces', 'Process:my process'],
+  ])('rejects ID with unsafe chars: %s', (_desc, id) => {
+    expect(isSafeId(id)).toBe(false);
+  });
 
   it('rejects empty string', () => {
     expect(isSafeId('')).toBe(false);

@@ -37,22 +37,12 @@ describe('formatQueryResult', () => {
 
   it('formats processes with symbols', () => {
     const result = formatQueryResult({
-      processes: [{ id: 'p1', summary: 'User Login Flow', step_count: 3, symbol_count: 2 }],
+      processes: [
+        { id: 'p1', summary: 'User Login Flow', step_count: 3, symbol_count: 2 },
+      ],
       process_symbols: [
-        {
-          process_id: 'p1',
-          type: 'Function',
-          name: 'login',
-          filePath: 'src/auth.ts',
-          startLine: 10,
-        },
-        {
-          process_id: 'p1',
-          type: 'Function',
-          name: 'validate',
-          filePath: 'src/auth.ts',
-          startLine: 20,
-        },
+        { process_id: 'p1', type: 'Function', name: 'login', filePath: 'src/auth.ts', startLine: 10 },
+        { process_id: 'p1', type: 'Function', name: 'validate', filePath: 'src/auth.ts', startLine: 20 },
       ],
       definitions: [],
     });
@@ -80,7 +70,9 @@ describe('formatQueryResult', () => {
   it('formats standalone definitions', () => {
     const result = formatQueryResult({
       processes: [],
-      definitions: [{ type: 'Interface', name: 'Config', filePath: 'src/types.ts' }],
+      definitions: [
+        { type: 'Interface', name: 'Config', filePath: 'src/types.ts' },
+      ],
     });
     expect(result).toContain('Standalone definitions');
     expect(result).toContain('Config');
@@ -142,7 +134,9 @@ describe('formatContextResult', () => {
       symbol: { kind: 'Function', name: 'foo', filePath: 'src/a.ts' },
       incoming: {},
       outgoing: {},
-      processes: [{ name: 'Auth Flow', step_index: 2, step_count: 5 }],
+      processes: [
+        { name: 'Auth Flow', step_index: 2, step_count: 5 },
+      ],
     });
     expect(result).toContain('1 execution flow');
     expect(result).toContain('Auth Flow');
@@ -173,20 +167,8 @@ describe('formatImpactResult', () => {
       partial: true,
       byDepth: {
         1: [
-          {
-            type: 'Function',
-            name: 'caller1',
-            filePath: 'src/a.ts',
-            relationType: 'CALLS',
-            confidence: 1,
-          },
-          {
-            type: 'Function',
-            name: 'caller2',
-            filePath: 'src/b.ts',
-            relationType: 'CALLS',
-            confidence: 1,
-          },
+          { type: 'Function', name: 'caller1', filePath: 'src/a.ts', relationType: 'CALLS', confidence: 1 },
+          { type: 'Function', name: 'caller2', filePath: 'src/b.ts', relationType: 'CALLS', confidence: 1 },
         ],
       },
     });
@@ -212,29 +194,11 @@ describe('formatImpactResult', () => {
       impactedCount: 3,
       byDepth: {
         1: [
-          {
-            type: 'Function',
-            name: 'caller1',
-            filePath: 'src/a.ts',
-            relationType: 'CALLS',
-            confidence: 1,
-          },
-          {
-            type: 'Function',
-            name: 'caller2',
-            filePath: 'src/b.ts',
-            relationType: 'CALLS',
-            confidence: 0.8,
-          },
+          { type: 'Function', name: 'caller1', filePath: 'src/a.ts', relationType: 'CALLS', confidence: 1 },
+          { type: 'Function', name: 'caller2', filePath: 'src/b.ts', relationType: 'CALLS', confidence: 0.8 },
         ],
         2: [
-          {
-            type: 'Class',
-            name: 'App',
-            filePath: 'src/app.ts',
-            relationType: 'IMPORTS',
-            confidence: 1,
-          },
+          { type: 'Class', name: 'App', filePath: 'src/app.ts', relationType: 'IMPORTS', confidence: 1 },
         ],
       },
     });
@@ -310,7 +274,9 @@ describe('formatDetectChangesResult', () => {
   it('formats changes with affected processes', () => {
     const result = formatDetectChangesResult({
       summary: { changed_files: 2, changed_count: 3, affected_count: 1, risk_level: 'MEDIUM' },
-      changed_symbols: [{ type: 'Function', name: 'foo', filePath: 'src/a.ts' }],
+      changed_symbols: [
+        { type: 'Function', name: 'foo', filePath: 'src/a.ts' },
+      ],
       affected_processes: [
         { name: 'Auth Flow', step_count: 5, changed_steps: [{ symbol: 'foo' }] },
       ],
