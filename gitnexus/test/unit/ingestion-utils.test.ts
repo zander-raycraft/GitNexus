@@ -1,15 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
-import { getProvider } from '../../src/core/ingestion/languages/index.js';
-import type { SyntaxNode } from '../../src/core/ingestion/utils/ast-helpers.js';
-import type { NodeLabel } from 'gitnexus-shared';
-import type { LanguageProvider } from '../../src/core/ingestion/language-provider.js';
-import {
-  getTreeSitterBufferSize,
-  getTreeSitterContentByteLength,
-  TREE_SITTER_BUFFER_SIZE,
-  TREE_SITTER_MAX_BUFFER,
-} from '../../src/core/ingestion/constants.js';
+import { getLanguageFromFilename, isBuiltInOrNoise, extractFunctionName } from '../../src/core/ingestion/utils.js';
+import { getTreeSitterBufferSize, TREE_SITTER_BUFFER_SIZE, TREE_SITTER_MAX_BUFFER } from '../../src/core/ingestion/constants.js';
+import { SupportedLanguages } from '../../src/config/supported-languages.js';
 import Parser from 'tree-sitter';
 import C from 'tree-sitter-c';
 import CPP from 'tree-sitter-cpp';
@@ -60,9 +52,12 @@ describe('getLanguageFromFilename', () => {
   });
 
   describe('C++', () => {
-    it.each(['.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh'])('detects %s files', (ext) => {
-      expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.CPlusPlus);
-    });
+    it.each(['.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh'])(
+      'detects %s files',
+      (ext) => {
+        expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.CPlusPlus);
+      }
+    );
   });
 
   describe('C#', () => {
@@ -84,9 +79,12 @@ describe('getLanguageFromFilename', () => {
   });
 
   describe('PHP', () => {
-    it.each(['.php', '.phtml', '.php3', '.php4', '.php5', '.php8'])('detects %s files', (ext) => {
-      expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.PHP);
-    });
+    it.each(['.php', '.phtml', '.php3', '.php4', '.php5', '.php8'])(
+      'detects %s files',
+      (ext) => {
+        expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.PHP);
+      }
+    );
   });
 
   describe('Swift', () => {
@@ -96,9 +94,12 @@ describe('getLanguageFromFilename', () => {
   });
 
   describe('Ruby', () => {
-    it.each(['.rb', '.rake', '.gemspec'])('detects %s files', (ext) => {
-      expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.Ruby);
-    });
+    it.each(['.rb', '.rake', '.gemspec'])(
+      'detects %s files',
+      (ext) => {
+        expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.Ruby);
+      }
+    );
 
     it('detects extensionless Rakefile', () => {
       expect(getLanguageFromFilename('Rakefile')).toBe(SupportedLanguages.Ruby);
@@ -110,9 +111,12 @@ describe('getLanguageFromFilename', () => {
   });
 
   describe('Kotlin', () => {
-    it.each(['.kt', '.kts'])('detects %s files', (ext) => {
-      expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.Kotlin);
-    });
+    it.each(['.kt', '.kts'])(
+      'detects %s files',
+      (ext) => {
+        expect(getLanguageFromFilename(`file${ext}`)).toBe(SupportedLanguages.Kotlin);
+      }
+    );
   });
 
   describe('unsupported', () => {
@@ -120,7 +124,7 @@ describe('getLanguageFromFilename', () => {
       'returns null for %s files',
       (ext) => {
         expect(getLanguageFromFilename(`file${ext}`)).toBeNull();
-      },
+      }
     );
 
     it('returns null for files without extension', () => {
@@ -134,233 +138,209 @@ describe('getLanguageFromFilename', () => {
 });
 
 describe('isBuiltInOrNoise', () => {
-  const js = getProvider(SupportedLanguages.JavaScript);
-  const py = getProvider(SupportedLanguages.Python);
-  const php = getProvider(SupportedLanguages.PHP);
-  const c = getProvider(SupportedLanguages.C);
-  const kt = getProvider(SupportedLanguages.Kotlin);
-  const swift = getProvider(SupportedLanguages.Swift);
-  const rust = getProvider(SupportedLanguages.Rust);
-  const cs = getProvider(SupportedLanguages.CSharp);
-
   describe('JavaScript/TypeScript', () => {
     it('filters console methods', () => {
-      expect(js.isBuiltInName('console')).toBe(true);
-      expect(js.isBuiltInName('log')).toBe(true);
-      expect(js.isBuiltInName('warn')).toBe(true);
+      expect(isBuiltInOrNoise('console')).toBe(true);
+      expect(isBuiltInOrNoise('log')).toBe(true);
+      expect(isBuiltInOrNoise('warn')).toBe(true);
     });
 
     it('filters React hooks', () => {
-      expect(js.isBuiltInName('useState')).toBe(true);
-      expect(js.isBuiltInName('useEffect')).toBe(true);
-      expect(js.isBuiltInName('useCallback')).toBe(true);
+      expect(isBuiltInOrNoise('useState')).toBe(true);
+      expect(isBuiltInOrNoise('useEffect')).toBe(true);
+      expect(isBuiltInOrNoise('useCallback')).toBe(true);
     });
 
     it('filters array methods', () => {
-      expect(js.isBuiltInName('map')).toBe(true);
-      expect(js.isBuiltInName('filter')).toBe(true);
-      expect(js.isBuiltInName('reduce')).toBe(true);
+      expect(isBuiltInOrNoise('map')).toBe(true);
+      expect(isBuiltInOrNoise('filter')).toBe(true);
+      expect(isBuiltInOrNoise('reduce')).toBe(true);
     });
   });
 
   describe('Python', () => {
     it('filters built-in functions', () => {
-      expect(py.isBuiltInName('print')).toBe(true);
-      expect(py.isBuiltInName('len')).toBe(true);
-      expect(py.isBuiltInName('range')).toBe(true);
+      expect(isBuiltInOrNoise('print')).toBe(true);
+      expect(isBuiltInOrNoise('len')).toBe(true);
+      expect(isBuiltInOrNoise('range')).toBe(true);
     });
   });
 
   describe('PHP', () => {
     it('filters PHP built-in functions', () => {
-      expect(php.isBuiltInName('echo')).toBe(true);
-      expect(php.isBuiltInName('isset')).toBe(true);
-      expect(php.isBuiltInName('date')).toBe(true);
-      expect(php.isBuiltInName('json_encode')).toBe(true);
-      expect(php.isBuiltInName('array_map')).toBe(true);
+      expect(isBuiltInOrNoise('echo')).toBe(true);
+      expect(isBuiltInOrNoise('isset')).toBe(true);
+      expect(isBuiltInOrNoise('date')).toBe(true);
+      expect(isBuiltInOrNoise('json_encode')).toBe(true);
+      expect(isBuiltInOrNoise('array_map')).toBe(true);
     });
 
     it('filters PHP string functions', () => {
-      expect(php.isBuiltInName('strlen')).toBe(true);
-      expect(php.isBuiltInName('substr')).toBe(true);
-      expect(php.isBuiltInName('str_replace')).toBe(true);
+      expect(isBuiltInOrNoise('strlen')).toBe(true);
+      expect(isBuiltInOrNoise('substr')).toBe(true);
+      expect(isBuiltInOrNoise('str_replace')).toBe(true);
     });
   });
 
   describe('C/C++', () => {
     it('filters standard library functions', () => {
-      expect(c.isBuiltInName('printf')).toBe(true);
-      expect(c.isBuiltInName('malloc')).toBe(true);
-      expect(c.isBuiltInName('free')).toBe(true);
+      expect(isBuiltInOrNoise('printf')).toBe(true);
+      expect(isBuiltInOrNoise('malloc')).toBe(true);
+      expect(isBuiltInOrNoise('free')).toBe(true);
     });
 
     it('filters Linux kernel macros', () => {
-      expect(c.isBuiltInName('container_of')).toBe(true);
-      expect(c.isBuiltInName('ARRAY_SIZE')).toBe(true);
-      expect(c.isBuiltInName('pr_info')).toBe(true);
+      expect(isBuiltInOrNoise('container_of')).toBe(true);
+      expect(isBuiltInOrNoise('ARRAY_SIZE')).toBe(true);
+      expect(isBuiltInOrNoise('pr_info')).toBe(true);
     });
   });
 
   describe('Kotlin', () => {
     it('filters stdlib functions', () => {
-      expect(kt.isBuiltInName('println')).toBe(true);
-      expect(kt.isBuiltInName('listOf')).toBe(true);
-      expect(kt.isBuiltInName('TODO')).toBe(true);
+      expect(isBuiltInOrNoise('println')).toBe(true);
+      expect(isBuiltInOrNoise('listOf')).toBe(true);
+      expect(isBuiltInOrNoise('TODO')).toBe(true);
     });
 
     it('filters coroutine functions', () => {
-      expect(kt.isBuiltInName('launch')).toBe(true);
-      expect(kt.isBuiltInName('async')).toBe(true);
+      expect(isBuiltInOrNoise('launch')).toBe(true);
+      expect(isBuiltInOrNoise('async')).toBe(true);
     });
   });
 
   describe('Swift', () => {
     it('filters built-in functions', () => {
-      expect(swift.isBuiltInName('print')).toBe(true);
-      expect(swift.isBuiltInName('fatalError')).toBe(true);
+      expect(isBuiltInOrNoise('print')).toBe(true);
+      expect(isBuiltInOrNoise('fatalError')).toBe(true);
     });
 
     it('filters UIKit methods', () => {
-      expect(swift.isBuiltInName('addSubview')).toBe(true);
-      expect(swift.isBuiltInName('reloadData')).toBe(true);
+      expect(isBuiltInOrNoise('addSubview')).toBe(true);
+      expect(isBuiltInOrNoise('reloadData')).toBe(true);
     });
   });
 
   describe('Rust', () => {
     it('filters Result/Option methods', () => {
-      expect(rust.isBuiltInName('unwrap')).toBe(true);
-      expect(rust.isBuiltInName('expect')).toBe(true);
-      expect(rust.isBuiltInName('unwrap_or')).toBe(true);
-      expect(rust.isBuiltInName('unwrap_or_else')).toBe(true);
-      expect(rust.isBuiltInName('unwrap_or_default')).toBe(true);
-      expect(rust.isBuiltInName('ok')).toBe(true);
-      expect(rust.isBuiltInName('err')).toBe(true);
-      expect(rust.isBuiltInName('is_ok')).toBe(true);
-      expect(rust.isBuiltInName('is_err')).toBe(true);
-      expect(rust.isBuiltInName('map_err')).toBe(true);
-      expect(rust.isBuiltInName('and_then')).toBe(true);
-      expect(rust.isBuiltInName('or_else')).toBe(true);
+      expect(isBuiltInOrNoise('unwrap')).toBe(true);
+      expect(isBuiltInOrNoise('expect')).toBe(true);
+      expect(isBuiltInOrNoise('unwrap_or')).toBe(true);
+      expect(isBuiltInOrNoise('unwrap_or_else')).toBe(true);
+      expect(isBuiltInOrNoise('unwrap_or_default')).toBe(true);
+      expect(isBuiltInOrNoise('ok')).toBe(true);
+      expect(isBuiltInOrNoise('err')).toBe(true);
+      expect(isBuiltInOrNoise('is_ok')).toBe(true);
+      expect(isBuiltInOrNoise('is_err')).toBe(true);
+      expect(isBuiltInOrNoise('map_err')).toBe(true);
+      expect(isBuiltInOrNoise('and_then')).toBe(true);
+      expect(isBuiltInOrNoise('or_else')).toBe(true);
     });
 
     it('filters trait conversion methods', () => {
-      expect(rust.isBuiltInName('clone')).toBe(true);
-      expect(rust.isBuiltInName('to_string')).toBe(true);
-      expect(rust.isBuiltInName('to_owned')).toBe(true);
-      expect(rust.isBuiltInName('into')).toBe(true);
-      expect(rust.isBuiltInName('from')).toBe(true);
-      expect(rust.isBuiltInName('as_ref')).toBe(true);
-      expect(rust.isBuiltInName('as_mut')).toBe(true);
+      expect(isBuiltInOrNoise('clone')).toBe(true);
+      expect(isBuiltInOrNoise('to_string')).toBe(true);
+      expect(isBuiltInOrNoise('to_owned')).toBe(true);
+      expect(isBuiltInOrNoise('into')).toBe(true);
+      expect(isBuiltInOrNoise('from')).toBe(true);
+      expect(isBuiltInOrNoise('as_ref')).toBe(true);
+      expect(isBuiltInOrNoise('as_mut')).toBe(true);
     });
 
     it('filters iterator methods', () => {
-      expect(rust.isBuiltInName('iter')).toBe(true);
-      expect(rust.isBuiltInName('into_iter')).toBe(true);
-      expect(rust.isBuiltInName('collect')).toBe(true);
-      expect(rust.isBuiltInName('fold')).toBe(true);
-      expect(rust.isBuiltInName('for_each')).toBe(true);
+      expect(isBuiltInOrNoise('iter')).toBe(true);
+      expect(isBuiltInOrNoise('into_iter')).toBe(true);
+      expect(isBuiltInOrNoise('collect')).toBe(true);
+      expect(isBuiltInOrNoise('fold')).toBe(true);
+      expect(isBuiltInOrNoise('for_each')).toBe(true);
     });
 
     it('filters collection methods', () => {
-      expect(rust.isBuiltInName('len')).toBe(true);
-      expect(rust.isBuiltInName('is_empty')).toBe(true);
-      expect(rust.isBuiltInName('push')).toBe(true);
-      expect(rust.isBuiltInName('pop')).toBe(true);
-      expect(rust.isBuiltInName('insert')).toBe(true);
-      expect(rust.isBuiltInName('remove')).toBe(true);
-      expect(rust.isBuiltInName('contains')).toBe(true);
+      expect(isBuiltInOrNoise('len')).toBe(true);
+      expect(isBuiltInOrNoise('is_empty')).toBe(true);
+      expect(isBuiltInOrNoise('push')).toBe(true);
+      expect(isBuiltInOrNoise('pop')).toBe(true);
+      expect(isBuiltInOrNoise('insert')).toBe(true);
+      expect(isBuiltInOrNoise('remove')).toBe(true);
+      expect(isBuiltInOrNoise('contains')).toBe(true);
     });
 
     it('filters macro-like and panic functions', () => {
-      expect(rust.isBuiltInName('format')).toBe(true);
-      expect(rust.isBuiltInName('panic')).toBe(true);
-      expect(rust.isBuiltInName('unreachable')).toBe(true);
-      expect(rust.isBuiltInName('todo')).toBe(true);
-      expect(rust.isBuiltInName('unimplemented')).toBe(true);
-      expect(rust.isBuiltInName('vec')).toBe(true);
-      expect(rust.isBuiltInName('println')).toBe(true);
-      expect(rust.isBuiltInName('eprintln')).toBe(true);
-      expect(rust.isBuiltInName('dbg')).toBe(true);
+      expect(isBuiltInOrNoise('format')).toBe(true);
+      expect(isBuiltInOrNoise('panic')).toBe(true);
+      expect(isBuiltInOrNoise('unreachable')).toBe(true);
+      expect(isBuiltInOrNoise('todo')).toBe(true);
+      expect(isBuiltInOrNoise('unimplemented')).toBe(true);
+      expect(isBuiltInOrNoise('vec')).toBe(true);
+      expect(isBuiltInOrNoise('println')).toBe(true);
+      expect(isBuiltInOrNoise('eprintln')).toBe(true);
+      expect(isBuiltInOrNoise('dbg')).toBe(true);
     });
 
     it('filters sync primitives', () => {
-      expect(rust.isBuiltInName('lock')).toBe(true);
-      expect(rust.isBuiltInName('try_lock')).toBe(true);
-      expect(rust.isBuiltInName('spawn')).toBe(true);
-      expect(rust.isBuiltInName('join')).toBe(true);
-      expect(rust.isBuiltInName('sleep')).toBe(true);
+      expect(isBuiltInOrNoise('lock')).toBe(true);
+      expect(isBuiltInOrNoise('try_lock')).toBe(true);
+      expect(isBuiltInOrNoise('spawn')).toBe(true);
+      expect(isBuiltInOrNoise('join')).toBe(true);
+      expect(isBuiltInOrNoise('sleep')).toBe(true);
     });
 
     it('filters enum constructors', () => {
-      expect(rust.isBuiltInName('Some')).toBe(true);
-      expect(rust.isBuiltInName('None')).toBe(true);
-      expect(rust.isBuiltInName('Ok')).toBe(true);
-      expect(rust.isBuiltInName('Err')).toBe(true);
+      expect(isBuiltInOrNoise('Some')).toBe(true);
+      expect(isBuiltInOrNoise('None')).toBe(true);
+      expect(isBuiltInOrNoise('Ok')).toBe(true);
+      expect(isBuiltInOrNoise('Err')).toBe(true);
     });
 
     it('does not filter user-defined Rust functions', () => {
-      expect(rust.isBuiltInName('process_request')).toBe(false);
-      expect(rust.isBuiltInName('handle_connection')).toBe(false);
-      expect(rust.isBuiltInName('build_response')).toBe(false);
+      expect(isBuiltInOrNoise('process_request')).toBe(false);
+      expect(isBuiltInOrNoise('handle_connection')).toBe(false);
+      expect(isBuiltInOrNoise('build_response')).toBe(false);
     });
   });
 
   describe('C#/.NET', () => {
     it('filters Console I/O', () => {
-      expect(cs.isBuiltInName('Console')).toBe(true);
-      expect(cs.isBuiltInName('WriteLine')).toBe(true);
-      expect(cs.isBuiltInName('ReadLine')).toBe(true);
+      expect(isBuiltInOrNoise('Console')).toBe(true);
+      expect(isBuiltInOrNoise('WriteLine')).toBe(true);
+      expect(isBuiltInOrNoise('ReadLine')).toBe(true);
     });
 
     it('filters LINQ methods', () => {
-      expect(cs.isBuiltInName('Where')).toBe(true);
-      expect(cs.isBuiltInName('Select')).toBe(true);
-      expect(cs.isBuiltInName('GroupBy')).toBe(true);
-      expect(cs.isBuiltInName('OrderBy')).toBe(true);
-      expect(cs.isBuiltInName('FirstOrDefault')).toBe(true);
-      expect(cs.isBuiltInName('ToList')).toBe(true);
+      expect(isBuiltInOrNoise('Where')).toBe(true);
+      expect(isBuiltInOrNoise('Select')).toBe(true);
+      expect(isBuiltInOrNoise('GroupBy')).toBe(true);
+      expect(isBuiltInOrNoise('OrderBy')).toBe(true);
+      expect(isBuiltInOrNoise('FirstOrDefault')).toBe(true);
+      expect(isBuiltInOrNoise('ToList')).toBe(true);
     });
 
     it('filters Task async methods', () => {
-      expect(cs.isBuiltInName('Task')).toBe(true);
-      expect(cs.isBuiltInName('Run')).toBe(true);
-      expect(cs.isBuiltInName('WhenAll')).toBe(true);
-      expect(cs.isBuiltInName('ConfigureAwait')).toBe(true);
+      expect(isBuiltInOrNoise('Task')).toBe(true);
+      expect(isBuiltInOrNoise('Run')).toBe(true);
+      expect(isBuiltInOrNoise('WhenAll')).toBe(true);
+      expect(isBuiltInOrNoise('ConfigureAwait')).toBe(true);
     });
 
     it('filters Object base methods', () => {
-      expect(cs.isBuiltInName('ToString')).toBe(true);
-      expect(cs.isBuiltInName('GetType')).toBe(true);
-      expect(cs.isBuiltInName('Equals')).toBe(true);
-      expect(cs.isBuiltInName('GetHashCode')).toBe(true);
+      expect(isBuiltInOrNoise('ToString')).toBe(true);
+      expect(isBuiltInOrNoise('GetType')).toBe(true);
+      expect(isBuiltInOrNoise('Equals')).toBe(true);
+      expect(isBuiltInOrNoise('GetHashCode')).toBe(true);
     });
   });
 
   describe('user-defined functions', () => {
     it('does not filter custom function names', () => {
-      expect(js.isBuiltInName('myCustomFunction')).toBe(false);
-      expect(py.isBuiltInName('processData')).toBe(false);
-      expect(rust.isBuiltInName('handleUserRequest')).toBe(false);
+      expect(isBuiltInOrNoise('myCustomFunction')).toBe(false);
+      expect(isBuiltInOrNoise('processData')).toBe(false);
+      expect(isBuiltInOrNoise('handleUserRequest')).toBe(false);
     });
   });
 });
 
-describe('extractFunctionName (via methodExtractor)', () => {
+describe('extractFunctionName', () => {
   const parser = new Parser();
-  const cProvider = getProvider(SupportedLanguages.C);
-  const cppProvider = getProvider(SupportedLanguages.CPlusPlus);
-  const tsProvider = getProvider(SupportedLanguages.TypeScript);
-
-  /** Test helper: extracts function name using methodExtractor hook with generic fallback. */
-  const extractFunctionName = (
-    node: SyntaxNode | null,
-    provider?: LanguageProvider,
-  ): { funcName: string | null; label: NodeLabel } => {
-    if (!node) return { funcName: null, label: 'Function' };
-    const result = provider?.methodExtractor?.extractFunctionName?.(node);
-    if (result) return result;
-    const funcName = node.childForFieldName?.('name')?.text ?? null;
-    return { funcName, label: 'Function' };
-  };
 
   describe('C', () => {
     it('extracts function name from C function definition', () => {
@@ -369,7 +349,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('main');
       expect(result.label).toBe('Function');
@@ -381,7 +361,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('helper');
       expect(result.label).toBe('Function');
@@ -395,7 +375,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('OnEncryptData');
       expect(result.label).toBe('Method');
@@ -407,7 +387,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('OnDataOprEvent');
       expect(result.label).toBe('Method');
@@ -419,7 +399,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('standalone_function');
       expect(result.label).toBe('Function');
@@ -431,7 +411,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('handler');
       expect(result.label).toBe('Method');
@@ -445,7 +425,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('get_data');
       expect(result.label).toBe('Function');
@@ -457,7 +437,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('get_strings');
       expect(result.label).toBe('Function');
@@ -469,7 +449,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('create_node');
       expect(result.label).toBe('Function');
@@ -483,7 +463,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('getData');
       expect(result.label).toBe('Method');
@@ -495,7 +475,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('get_name');
       expect(result.label).toBe('Function');
@@ -507,7 +487,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('at');
       expect(result.label).toBe('Method');
@@ -519,7 +499,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       expect(result.funcName).toBe('getName');
       expect(result.label).toBe('Method');
@@ -533,7 +513,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const tree = parser.parse(code);
       const funcNode = tree.rootNode.child(0);
 
-      const result = extractFunctionName(funcNode, cppProvider);
+      const result = extractFunctionName(funcNode);
 
       // destructor_name includes the ~ prefix
       expect(result.funcName).toBe('~MyClass');
@@ -551,7 +531,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const declarator = varDecl!.namedChild(0);
       const arrowFunc = declarator!.namedChild(1);
 
-      const result = extractFunctionName(arrowFunc, tsProvider);
+      const result = extractFunctionName(arrowFunc);
 
       expect(result.funcName).toBe('myHandler');
       expect(result.label).toBe('Function');
@@ -566,7 +546,7 @@ describe('extractFunctionName (via methodExtractor)', () => {
       const declarator = varDecl!.namedChild(0);
       const funcExpr = declarator!.namedChild(1);
 
-      const result = extractFunctionName(funcExpr, tsProvider);
+      const result = extractFunctionName(funcExpr);
 
       expect(result.funcName).toBe('processItem');
       expect(result.label).toBe('Function');
@@ -639,49 +619,33 @@ describe('extractFunctionName (via methodExtractor)', () => {
 });
 
 describe('getTreeSitterBufferSize', () => {
-  const expectedBufferSize = (byteLength: number): number =>
-    Math.min(Math.max(byteLength * 2, TREE_SITTER_BUFFER_SIZE), TREE_SITTER_MAX_BUFFER);
-
   it('returns minimum 512KB for small files', () => {
-    expect(getTreeSitterBufferSize('x'.repeat(100))).toBe(TREE_SITTER_BUFFER_SIZE);
-    expect(getTreeSitterBufferSize('')).toBe(TREE_SITTER_BUFFER_SIZE);
-    expect(getTreeSitterBufferSize('x'.repeat(1000))).toBe(TREE_SITTER_BUFFER_SIZE);
+    expect(getTreeSitterBufferSize(100)).toBe(TREE_SITTER_BUFFER_SIZE);
+    expect(getTreeSitterBufferSize(0)).toBe(TREE_SITTER_BUFFER_SIZE);
+    expect(getTreeSitterBufferSize(1000)).toBe(TREE_SITTER_BUFFER_SIZE);
   });
 
   it('returns 2x content length when larger than minimum', () => {
-    const size = 400 * 1024; // 400 KB, 2x = 800 KB > 512 KB min
-    expect(getTreeSitterBufferSize('x'.repeat(size))).toBe(size * 2);
+    const size = 400 * 1024; // 400 KB — 2x = 800 KB > 512 KB min
+    expect(getTreeSitterBufferSize(size)).toBe(size * 2);
   });
 
   it('caps at 32MB for very large files', () => {
-    const huge = 'x'.repeat(20 * 1024 * 1024); // 20 MB, 2x = 40 MB > 32 MB cap
+    const huge = 20 * 1024 * 1024; // 20 MB — 2x = 40 MB > 32 MB cap
     expect(getTreeSitterBufferSize(huge)).toBe(32 * 1024 * 1024);
   });
 
   it('returns exactly 512KB at the boundary', () => {
     // 256KB * 2 = 512KB = minimum, so should return minimum
-    expect(getTreeSitterBufferSize('x'.repeat(256 * 1024))).toBe(TREE_SITTER_BUFFER_SIZE);
+    expect(getTreeSitterBufferSize(256 * 1024)).toBe(TREE_SITTER_BUFFER_SIZE);
   });
 
   it('scales linearly between min and max', () => {
-    const small = getTreeSitterBufferSize('x'.repeat(300 * 1024));
-    const medium = getTreeSitterBufferSize('x'.repeat(1 * 1024 * 1024));
-    const large = getTreeSitterBufferSize('x'.repeat(5 * 1024 * 1024));
+    const small = getTreeSitterBufferSize(300 * 1024);
+    const medium = getTreeSitterBufferSize(1 * 1024 * 1024);
+    const large = getTreeSitterBufferSize(5 * 1024 * 1024);
     expect(small).toBeLessThan(medium);
     expect(medium).toBeLessThan(large);
-  });
-
-  it('sizes from UTF-8 bytes, not UTF-16 code units', () => {
-    const source = '漢'.repeat(190_000);
-    const byteLength = getTreeSitterContentByteLength(source);
-    expect(byteLength).toBe(source.length * 3);
-    expect(getTreeSitterBufferSize(source)).toBe(expectedBufferSize(byteLength));
-  });
-
-  it('caps UTF-8-heavy sources using byte length', () => {
-    const source = '漢'.repeat(6_000_000);
-    expect(getTreeSitterContentByteLength(source)).toBe(source.length * 3);
-    expect(getTreeSitterBufferSize(source)).toBe(TREE_SITTER_MAX_BUFFER);
   });
 
   it('TREE_SITTER_MAX_BUFFER is 32MB', () => {
@@ -690,18 +654,21 @@ describe('getTreeSitterBufferSize', () => {
 
   it('returns max buffer at exact boundary (16MB input)', () => {
     // 16MB * 2 = 32MB = max
-    expect(getTreeSitterBufferSize('x'.repeat(16 * 1024 * 1024))).toBe(TREE_SITTER_MAX_BUFFER);
+    expect(getTreeSitterBufferSize(16 * 1024 * 1024)).toBe(TREE_SITTER_MAX_BUFFER);
   });
 
   it('file just over max returns max buffer', () => {
     // 17MB * 2 = 34MB > 32MB cap
-    expect(getTreeSitterBufferSize('x'.repeat(17 * 1024 * 1024))).toBe(TREE_SITTER_MAX_BUFFER);
+    expect(getTreeSitterBufferSize(17 * 1024 * 1024)).toBe(TREE_SITTER_MAX_BUFFER);
   });
 
   it('handles files between old 512KB limit and new 32MB limit', () => {
+    // This is the range that was previously silently skipped
     const sizes = [600 * 1024, 1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024];
     for (const size of sizes) {
-      expect(getTreeSitterBufferSize('x'.repeat(size))).toBe(expectedBufferSize(size));
+      const bufSize = getTreeSitterBufferSize(size);
+      expect(bufSize).toBeGreaterThanOrEqual(TREE_SITTER_BUFFER_SIZE);
+      expect(bufSize).toBeLessThanOrEqual(TREE_SITTER_MAX_BUFFER);
     }
   });
 });

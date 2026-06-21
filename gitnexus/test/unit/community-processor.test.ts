@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  getCommunityColor,
-  COMMUNITY_COLORS,
-} from '../../src/core/ingestion/community-processor.js';
+import { getCommunityColor, COMMUNITY_COLORS } from '../../src/core/ingestion/community-processor.js';
 
 describe('community-processor', () => {
   describe('COMMUNITY_COLORS', () => {

@@ -17,13 +17,9 @@ public class UserService
         return new User();
     }
 
-    public void CallById()
+    public void Run()
     {
-        Lookup(42);        // literal int → must resolve to Lookup(int) only
-    }
-
-    public void CallByName()
-    {
-        Lookup("alice");   // literal string → must resolve to Lookup(string) only
+        Lookup(42);        // literal int → should disambiguate to Lookup(int)
+        Lookup("alice");   // literal string → should disambiguate to Lookup(string)
     }
 }

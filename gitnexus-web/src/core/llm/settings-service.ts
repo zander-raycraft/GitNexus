@@ -1,6 +1,6 @@
 /**
  * Settings Service
- *
+ * 
  * Handles localStorage persistence for LLM provider settings.
  * All API keys are stored locally - never sent to any server except the LLM provider.
  */
@@ -16,7 +16,6 @@ import {
   OllamaConfig,
   OpenRouterConfig,
   MiniMaxConfig,
-  GLMConfig,
   ProviderConfig,
 } from './types';
 import { DEFAULT_OPENROUTER_BASE_URL, DEFAULT_OLLAMA_BASE_URL } from '../../config/ui-constants';
@@ -53,10 +52,6 @@ const mergeWithDefaults = (parsed?: Partial<LLMSettings> | null): LLMSettings =>
   minimax: {
     ...DEFAULT_LLM_SETTINGS.minimax,
     ...parsed?.minimax,
-  },
-  glm: {
-    ...DEFAULT_LLM_SETTINGS.glm,
-    ...parsed?.glm,
   },
 });
 
@@ -127,24 +122,14 @@ export const saveSettings = (settings: LLMSettings): void => {
 export const updateProviderSettings = <T extends LLMProvider>(
   provider: T,
   updates: Partial<
-    T extends 'openai'
-      ? Partial<Omit<OpenAIConfig, 'provider'>>
-      : T extends 'azure-openai'
-        ? Partial<Omit<AzureOpenAIConfig, 'provider'>>
-        : T extends 'gemini'
-          ? Partial<Omit<GeminiConfig, 'provider'>>
-          : T extends 'anthropic'
-            ? Partial<Omit<AnthropicConfig, 'provider'>>
-            : T extends 'ollama'
-              ? Partial<Omit<OllamaConfig, 'provider'>>
-              : T extends 'openrouter'
-                ? Partial<Omit<OpenRouterConfig, 'provider'>>
-                : T extends 'minimax'
-                  ? Partial<Omit<MiniMaxConfig, 'provider'>>
-                  : T extends 'glm'
-                    ? Partial<Omit<GLMConfig, 'provider'>>
-                    : never
-  >,
+    T extends 'openai' ? Partial<Omit<OpenAIConfig, 'provider'>> :
+    T extends 'azure-openai' ? Partial<Omit<AzureOpenAIConfig, 'provider'>> :
+    T extends 'gemini' ? Partial<Omit<GeminiConfig, 'provider'>> :
+    T extends 'anthropic' ? Partial<Omit<AnthropicConfig, 'provider'>> :
+    T extends 'ollama' ? Partial<Omit<OllamaConfig, 'provider'>> :
+    T extends 'minimax' ? Partial<Omit<MiniMaxConfig, 'provider'>> :
+    never
+  >
 ): LLMSettings => {
   const current = loadSettings();
 
@@ -227,17 +212,6 @@ export const updateProviderSettings = <T extends LLMProvider>(
       saveSettings(updated);
       return updated;
     }
-    case 'glm': {
-      const updated: LLMSettings = {
-        ...current,
-        glm: {
-          ...(current.glm ?? {}),
-          ...(updates as Partial<Omit<GLMConfig, 'provider'>>),
-        },
-      };
-      saveSettings(updated);
-      return updated;
-    }
     default: {
       // Should be unreachable due to T extends LLMProvider, but keep a safe fallback
       const updated: LLMSettings = { ...current };
@@ -304,17 +278,6 @@ const providerBuilders: Record<LLMProvider, ProviderBuilder> = {
     if (!settings.minimax?.apiKey) return null;
     return { provider: 'minimax', ...settings.minimax } as MiniMaxConfig;
   },
-  glm: (settings) => {
-    if (!settings.glm?.apiKey) return null;
-    return {
-      provider: 'glm',
-      apiKey: settings.glm.apiKey,
-      model: settings.glm.model || 'GLM-5',
-      baseUrl: settings.glm.baseUrl || 'https://api.z.ai/api/coding/paas/v4',
-      temperature: settings.glm.temperature,
-      maxTokens: settings.glm.maxTokens,
-    } as GLMConfig;
-  },
 };
 
 export const getActiveProviderConfig = (): ProviderConfig | null => {
@@ -365,8 +328,6 @@ export const getProviderDisplayName = (provider: LLMProvider): string => {
       return 'OpenRouter';
     case 'minimax':
       return 'MiniMax';
-    case 'glm':
-      return 'GLM (Z.AI)';
     default:
       return provider;
   }
@@ -385,18 +346,11 @@ export const getAvailableModels = (provider: LLMProvider): string[] => {
     case 'gemini':
       return ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'];
     case 'anthropic':
-      return [
-        'claude-sonnet-4-20250514',
-        'claude-3-5-sonnet-20241022',
-        'claude-3-5-haiku-20241022',
-        'claude-3-opus-20240229',
-      ];
+      return ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'];
     case 'ollama':
       return ['llama3.2', 'llama3.1', 'mistral', 'codellama', 'deepseek-coder'];
     case 'minimax':
       return ['MiniMax-M2.5', 'MiniMax-M2.5-highspeed'];
-    case 'glm':
-      return ['GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.5'];
     default:
       return [];
   }
@@ -419,3 +373,4 @@ export const fetchOpenRouterModels = async (): Promise<Array<{ id: string; name:
     return [];
   }
 };
+

@@ -1,5 +1,5 @@
-# Deprecated for Cursor Agent Mode
+# AI Agent Rules
 
-Use **`.cursor/index.mdc`** (`alwaysApply: true`) for project rules. See [AGENTS.md](AGENTS.md).
+Follow .gitnexus/RULES.md for all project context and coding guidelines.
 
-This file is kept only as a breadcrumb for older workflows.
+This project uses GitNexus MCP for code intelligence. See .gitnexus/RULES.md for available tools and best practices.

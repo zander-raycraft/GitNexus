@@ -1,272 +1,235 @@
 /**
  * Text Generator Module
- *
- * Generates enriched embedding text from code nodes with metadata.
- * Supports chunkable labels (Function/Method with AST chunking),
- * Class-specific structural text, and short-node direct embed.
- *
- * Method/field names for Class nodes are extracted by the ingestion
- * pipeline's AST extractors and passed via node.methodNames/node.fieldNames.
+ * 
+ * Pure functions to generate embedding text from code nodes.
+ * Combines node metadata with code snippets for semantic matching.
  */
 
 import type { EmbeddableNode, EmbeddingConfig } from './types.js';
-import {
-  CHUNKING_RULES,
-  DEFAULT_EMBEDDING_CONFIG,
-  STRUCTURAL_TEXT_MODE_DECLARATION,
-  isShortLabel,
-} from './types.js';
+import { DEFAULT_EMBEDDING_CONFIG } from './types.js';
 
 /**
- * Truncate description to max length at sentence/word boundary
+ * Extract the filename from a file path
  */
-const truncateDescription = (text: string, maxLength: number): string => {
-  if (text.length <= maxLength) return text;
+const getFileName = (filePath: string): string => {
+  const parts = filePath.split('/');
+  return parts[parts.length - 1] || filePath;
+};
 
-  const truncated = text.slice(0, maxLength);
+/**
+ * Extract the directory path from a file path
+ */
+const getDirectory = (filePath: string): string => {
+  const parts = filePath.split('/');
+  parts.pop();
+  return parts.join('/') || '';
+};
 
-  // Try sentence boundary (. ! ?)
-  const sentenceEnd = Math.max(
-    truncated.lastIndexOf('. '),
-    truncated.lastIndexOf('! '),
-    truncated.lastIndexOf('? '),
-  );
-  if (sentenceEnd > maxLength * 0.5) {
-    return truncated.slice(0, sentenceEnd + 1);
+/**
+ * Truncate content to max length, preserving word boundaries
+ */
+const truncateContent = (content: string, maxLength: number): string => {
+  if (content.length <= maxLength) {
+    return content;
   }
-
-  // Try word boundary
+  
+  // Find last space before maxLength to avoid cutting words
+  const truncated = content.slice(0, maxLength);
   const lastSpace = truncated.lastIndexOf(' ');
-  if (lastSpace > maxLength * 0.5) {
-    return truncated.slice(0, lastSpace);
+  
+  if (lastSpace > maxLength * 0.8) {
+    return truncated.slice(0, lastSpace) + '...';
   }
-
-  return truncated;
+  
+  return truncated + '...';
 };
 
 /**
  * Clean code content for embedding
+ * Removes excessive whitespace while preserving structure
  */
 const cleanContent = (content: string): string => {
   return content
+    // Normalize line endings
     .replace(/\r\n/g, '\n')
+    // Remove excessive blank lines (more than 2)
     .replace(/\n{3,}/g, '\n\n')
+    // Trim each line
     .split('\n')
-    .map((line) => line.trimEnd())
+    .map(line => line.trimEnd())
     .join('\n')
     .trim();
 };
 
 /**
- * Build metadata header for a node
+ * Generate embedding text for a Function node
  */
-const buildMetadataHeader = (node: EmbeddableNode, config: Partial<EmbeddingConfig>): string => {
-  const parts: string[] = [];
-
-  // Label + name
-  parts.push(`${node.label}: ${node.name}`);
-
-  // Repo name
-  if (node.repoName) {
-    parts.push(`Repo: ${node.repoName}`);
-  }
-
-  // Server name (optional)
-  if (node.serverName) {
-    parts.push(`Server: ${node.serverName}`);
-  }
-
-  // Full file path
-  parts.push(`Path: ${node.filePath}`);
-
-  // Export status
-  if (node.isExported !== undefined) {
-    parts.push(`Export: ${node.isExported}`);
-  }
-
-  // Description (truncated)
-  if (node.description) {
-    const maxLen = config.maxDescriptionLength ?? DEFAULT_EMBEDDING_CONFIG.maxDescriptionLength;
-    const truncated = truncateDescription(node.description, maxLen);
-    if (truncated) {
-      parts.push(truncated);
-    }
-  }
-
-  return parts.join('\n');
-};
-
-const generateCodeBodyText = (
+const generateFunctionText = (
   node: EmbeddableNode,
-  codeBody: string,
-  config: Partial<EmbeddingConfig>,
-  prevTail?: string,
+  maxSnippetLength: number
 ): string => {
-  const header = buildMetadataHeader(node, config);
-  const parts = [header];
-  if (prevTail) {
-    parts.push(`[preceding context]: ...${cleanContent(prevTail)}`);
-  }
-  parts.push('', cleanContent(codeBody));
-  return parts.join('\n');
-};
+  const parts: string[] = [
+    `Function: ${node.name}`,
+    `File: ${getFileName(node.filePath)}`,
+  ];
 
-const getCompactContainerContext = (
-  cleanedContent: string,
-  declarationOnly: string,
-): string | undefined => {
-  const source = declarationOnly || cleanedContent;
-  const nlIdx = source.indexOf('\n');
-  const firstLine = (nlIdx === -1 ? source : source.substring(0, nlIdx)).trim();
-  return firstLine ? `Container: ${firstLine}` : undefined;
-};
-
-const generateStructuralTypeText = (
-  node: EmbeddableNode,
-  codeBody: string,
-  config: Partial<EmbeddingConfig>,
-  chunkIndex?: number,
-  prevTail?: string,
-): string => {
-  const header = buildMetadataHeader(node, config);
-  const parts: string[] = [header];
-  const isFirstChunk = chunkIndex === undefined || chunkIndex === 0;
-  const cleanedContent = cleanContent(node.content);
-  const declarationOnly = extractDeclarationOnly(cleanedContent);
-  const compactContainerContext = getCompactContainerContext(cleanedContent, declarationOnly);
-
-  if (compactContainerContext) {
-    parts.push(compactContainerContext);
+  const dir = getDirectory(node.filePath);
+  if (dir) {
+    parts.push(`Directory: ${dir}`);
   }
 
-  if (prevTail) {
-    parts.push(`[preceding context]: ...${cleanContent(prevTail)}`);
-  }
-
-  if (isFirstChunk && node.methodNames?.length) {
-    parts.push(`Methods: ${node.methodNames.join(', ')}`);
-  }
-  if (isFirstChunk && node.fieldNames?.length) {
-    parts.push(`Properties: ${node.fieldNames.join(', ')}`);
-  }
-
-  if (isFirstChunk && declarationOnly) {
-    parts.push('', declarationOnly);
-  }
-
-  const cleanedChunk = cleanContent(codeBody);
-  if (cleanedChunk && cleanedChunk !== cleanedContent) {
-    parts.push('', cleanedChunk);
+  if (node.content) {
+    const cleanedContent = cleanContent(node.content);
+    const snippet = truncateContent(cleanedContent, maxSnippetLength);
+    parts.push('', snippet);
   }
 
   return parts.join('\n');
 };
-
-const DECL_START_RE =
-  /^(?:(?:export|pub|data|abstract)\s+)*(?:type\s+\w+\s+struct|(?:class|struct|enum|interface)\s)/;
 
 /**
- * Extract class/interface/struct declaration lines, skipping method bodies.
- * - Brace-based languages: detects method signatures (lines with `(` and `{`)
- *   and skips until depth returns to class body level.
- * - Non-brace languages (Python/Ruby): returns empty string (patterns handle extraction).
+ * Generate embedding text for a Class node
  */
-export const extractDeclarationOnly = (content: string): string => {
-  const lines = content.split('\n');
-  const declLines: string[] = [];
-  let depth = 0;
-  let started = false;
-  let classDepth = 0;
-  let skipDepth = 0;
+const generateClassText = (
+  node: EmbeddableNode,
+  maxSnippetLength: number
+): string => {
+  const parts: string[] = [
+    `Class: ${node.name}`,
+    `File: ${getFileName(node.filePath)}`,
+  ];
 
-  for (const [idx, line] of lines.entries()) {
-    const trimmed = line.trim();
-
-    if (!started) {
-      if (DECL_START_RE.test(trimmed)) {
-        // Non-brace language check: current line or next 3 lines must have `{`
-        const nextLines = lines.slice(idx + 1, idx + 4);
-        if (!trimmed.includes('{') && !nextLines.some((l) => l.includes('{'))) {
-          return '';
-        }
-        started = true;
-        declLines.push(trimmed);
-        for (const ch of trimmed) {
-          if (ch === '{') depth++;
-          else if (ch === '}') depth--;
-        }
-        if (depth > 0) classDepth = depth;
-      }
-      continue;
-    }
-
-    // Always update depth (even when skipping)
-    const opens = (trimmed.match(/{/g) || []).length;
-    const closes = (trimmed.match(/}/g) || []).length;
-    const prevDepth = depth;
-    depth += opens - closes;
-
-    if (skipDepth > 0) {
-      if (depth <= classDepth) {
-        skipDepth = 0;
-        // Closing brace of class
-        if (depth <= 0) {
-          declLines.push(trimmed);
-          break;
-        }
-      }
-      continue;
-    }
-
-    // Detect method signature: line has both `(` and `{` and goes deeper than class body
-    const hasParens = trimmed.includes('(');
-    const hasOpenBrace = opens > 0;
-    if (hasParens && hasOpenBrace && prevDepth + opens > classDepth) {
-      if (opens === closes && trimmed.endsWith(';')) {
-        // Property with function/object initializer like `config = { timeout: 5000 };` — keep
-        declLines.push(trimmed);
-      }
-      // else: single-line or multi-line method — skip entirely
-      if (opens !== closes) {
-        skipDepth = classDepth;
-      }
-      continue;
-    }
-
-    declLines.push(trimmed);
-
-    if (depth <= 0 && declLines.length > 1) break;
+  const dir = getDirectory(node.filePath);
+  if (dir) {
+    parts.push(`Directory: ${dir}`);
   }
 
-  return declLines.join('\n').trim();
+  if (node.content) {
+    const cleanedContent = cleanContent(node.content);
+    const snippet = truncateContent(cleanedContent, maxSnippetLength);
+    parts.push('', snippet);
+  }
+
+  return parts.join('\n');
+};
+
+/**
+ * Generate embedding text for a Method node
+ */
+const generateMethodText = (
+  node: EmbeddableNode,
+  maxSnippetLength: number
+): string => {
+  const parts: string[] = [
+    `Method: ${node.name}`,
+    `File: ${getFileName(node.filePath)}`,
+  ];
+
+  const dir = getDirectory(node.filePath);
+  if (dir) {
+    parts.push(`Directory: ${dir}`);
+  }
+
+  if (node.content) {
+    const cleanedContent = cleanContent(node.content);
+    const snippet = truncateContent(cleanedContent, maxSnippetLength);
+    parts.push('', snippet);
+  }
+
+  return parts.join('\n');
+};
+
+/**
+ * Generate embedding text for an Interface node
+ */
+const generateInterfaceText = (
+  node: EmbeddableNode,
+  maxSnippetLength: number
+): string => {
+  const parts: string[] = [
+    `Interface: ${node.name}`,
+    `File: ${getFileName(node.filePath)}`,
+  ];
+
+  const dir = getDirectory(node.filePath);
+  if (dir) {
+    parts.push(`Directory: ${dir}`);
+  }
+
+  if (node.content) {
+    const cleanedContent = cleanContent(node.content);
+    const snippet = truncateContent(cleanedContent, maxSnippetLength);
+    parts.push('', snippet);
+  }
+
+  return parts.join('\n');
+};
+
+/**
+ * Generate embedding text for a File node
+ * Uses file name and first N characters of content
+ */
+const generateFileText = (
+  node: EmbeddableNode,
+  maxSnippetLength: number
+): string => {
+  const parts: string[] = [
+    `File: ${node.name}`,
+    `Path: ${node.filePath}`,
+  ];
+
+  if (node.content) {
+    const cleanedContent = cleanContent(node.content);
+    // For files, use a shorter snippet since they can be very long
+    const snippet = truncateContent(cleanedContent, Math.min(maxSnippetLength, 300));
+    parts.push('', snippet);
+  }
+
+  return parts.join('\n');
 };
 
 /**
  * Generate embedding text for any embeddable node
  * Dispatches to the appropriate generator based on node label
+ * 
+ * @param node - The node to generate text for
+ * @param config - Optional configuration for max snippet length
+ * @returns Text suitable for embedding
  */
 export const generateEmbeddingText = (
   node: EmbeddableNode,
-  codeBody: string,
-  config: Partial<EmbeddingConfig> = {},
-  chunkIndex?: number,
-  prevTail?: string,
+  config: Partial<EmbeddingConfig> = {}
 ): string => {
-  if (isShortLabel(node.label)) {
-    const header = buildMetadataHeader(node, config);
-    const cleaned = cleanContent(node.content);
-    return `${header}\n\n${cleaned}`;
-  }
+  const maxSnippetLength = config.maxSnippetLength ?? DEFAULT_EMBEDDING_CONFIG.maxSnippetLength;
 
-  const chunkingRule = CHUNKING_RULES[node.label];
-  if (chunkingRule?.structuralTextMode === STRUCTURAL_TEXT_MODE_DECLARATION) {
-    return generateStructuralTypeText(node, codeBody, config, chunkIndex, prevTail);
+  switch (node.label) {
+    case 'Function':
+      return generateFunctionText(node, maxSnippetLength);
+    case 'Class':
+      return generateClassText(node, maxSnippetLength);
+    case 'Method':
+      return generateMethodText(node, maxSnippetLength);
+    case 'Interface':
+      return generateInterfaceText(node, maxSnippetLength);
+    case 'File':
+      return generateFileText(node, maxSnippetLength);
+    default:
+      // Fallback for any other embeddable type
+      return `${node.label}: ${node.name}\nPath: ${node.filePath}`;
   }
-
-  return generateCodeBodyText(node, codeBody, config, prevTail);
 };
 
 /**
- * Export truncation helper for testing
+ * Generate embedding texts for a batch of nodes
+ * 
+ * @param nodes - Array of nodes to generate text for
+ * @param config - Optional configuration
+ * @returns Array of texts in the same order as input nodes
  */
-export { truncateDescription };
+export const generateBatchEmbeddingTexts = (
+  nodes: EmbeddableNode[],
+  config: Partial<EmbeddingConfig> = {}
+): string[] => {
+  return nodes.map(node => generateEmbeddingText(node, config));
+};
+

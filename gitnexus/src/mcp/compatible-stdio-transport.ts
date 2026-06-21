@@ -1,8 +1,5 @@
 import process from 'node:process';
-import type {
-  Transport,
-  TransportSendOptions,
-} from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { Transport, TransportSendOptions } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { JSONRPCMessageSchema, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 export type StdioFraming = 'content-length' | 'newline';
@@ -131,9 +128,7 @@ export class CompatibleStdioServerTransport implements Transport {
     }
     if (contentLength > MAX_BUFFER_SIZE) {
       this.discardBufferedInput();
-      throw new Error(
-        `Content-Length ${contentLength} exceeds maximum allowed size (${MAX_BUFFER_SIZE} bytes)`,
-      );
+      throw new Error(`Content-Length ${contentLength} exceeds maximum allowed size (${MAX_BUFFER_SIZE} bytes)`);
     }
     const bodyStart = header.index + header.separatorLength;
     const bodyEnd = bodyStart + contentLength;
@@ -220,10 +215,9 @@ export class CompatibleStdioServerTransport implements Transport {
         return;
       }
 
-      const payload =
-        this._framing === 'newline'
-          ? serializeNewlineMessage(message)
-          : serializeContentLengthMessage(message);
+      const payload = this._framing === 'newline'
+        ? serializeNewlineMessage(message)
+        : serializeContentLengthMessage(message);
 
       const onError = (error: Error) => {
         this._stdout.removeListener('error', onError);
